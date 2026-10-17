@@ -48,6 +48,22 @@ fn selector_button(board: &Controller, title: &str) -> gtk::Button {
     panic!("Missing selector entry: {title}");
 }
 
+fn assert_selected(board: &Controller, id: &str) {
+    assert_eq!(board.active.as_deref(), Some(id));
+    assert_eq!(
+        board.pages.visible_child(),
+        Some(board.cards[id].root.clone().upcast())
+    );
+    assert_eq!(
+        board
+            .cards
+            .values()
+            .filter(|card| card.root.is_child_visible())
+            .count(),
+        1
+    );
+}
+
 #[test]
 #[ignore = "requires an isolated GTK display, XDG directories and D-Bus session"]
 fn board_gui_regressions() {
@@ -71,9 +87,13 @@ fn board_gui_regressions() {
     Controller::show(&this);
     pump();
     assert_eq!(app.windows().len(), 1);
+    assert!(!this.borrow().window.is_decorated());
+    assert!(this.borrow().window.titlebar().is_none());
+    assert_eq!(this.borrow().pages.margin_top(), 0);
     assert_eq!(this.borrow().cards.len(), 1);
     let first = this.borrow().cards.keys().next().unwrap().clone();
     assert!(this.borrow().cards[&first].editing());
+    assert_selected(&this.borrow(), &first);
     assert!(!this.borrow().cards[&first].status.is_visible());
     let editor = this.borrow().cards[&first].editor.clone();
     editor.buffer().set_text("# Draft\n\n- [ ] Task\n");
@@ -136,32 +156,49 @@ fn board_gui_regressions() {
     click.emit_by_name::<()>("released", &[&1i32, &12.0f64, &12.0f64]);
     pump();
     assert!(this.borrow().cards[&first].editing());
-    // FlowBox activates its child after a TextView click. That must not take
-    // focus from the editor and turn a caret move or text selection into Preview.
-    let child = this.borrow().cards[&first]
-        .root
-        .parent()
-        .unwrap()
-        .downcast::<gtk::FlowBoxChild>()
-        .unwrap();
     let buffer = editor.buffer();
-    for offset in [4, 12] {
-        buffer.place_cursor(&buffer.iter_at_offset(offset));
-        child.emit_by_name::<()>("activate", &[]);
-        pump();
-        assert!(
-            this.borrow().cards[&first].editing(),
-            "Editor click left Edit"
-        );
-        assert!(editor.has_focus(), "Card container stole editor focus");
-        assert_eq!(buffer.cursor_position(), offset);
-    }
-    buffer.select_range(&buffer.iter_at_offset(2), &buffer.iter_at_offset(10));
-    child.emit_by_name::<()>("activate", &[]);
+    buffer.place_cursor(&buffer.start_iter());
+    editor.emit_by_name::<()>(
+        "move-cursor",
+        &[&gtk::MovementStep::LogicalPositions, &2i32, &false],
+    );
     pump();
     assert!(this.borrow().cards[&first].editing());
-    assert!(editor.has_focus());
+    assert!(
+        editor.is_focus(),
+        "Caret stays in the editor even when the compositor deactivates the window"
+    );
+    assert_eq!(buffer.cursor_position(), 2);
+    editor.emit_by_name::<()>(
+        "move-cursor",
+        &[&gtk::MovementStep::LogicalPositions, &3i32, &true],
+    );
+    pump();
     assert!(buffer.has_selection());
+    // Focus-follows-mouse may deactivate the window without a click.
+    let other = gtk::Window::new();
+    other.present();
+    pump();
+    assert!(!this.borrow().window.is_active());
+    assert!(
+        this.borrow().cards[&first].editing(),
+        "Window deactivation alone must not finish editing"
+    );
+    other.destroy();
+    this.borrow().window.present();
+    pump();
+    // The paper title is the explicit way back to Preview.
+    let title = this.borrow().cards[&first].title.clone();
+    let controllers = title.observe_controllers();
+    let click = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|item| item.downcast::<gtk::GestureClick>().ok())
+        .unwrap();
+    click.emit_by_name::<()>("released", &[&1i32, &12.0f64, &12.0f64]);
+    pump();
+    assert!(!this.borrow().cards[&first].editing());
+    Controller::edit(&this, &first, None);
+    pump();
     editor.buffer().set_text("Uncommitted newest content");
     assert_eq!(
         this.borrow().cards[&first].raw(),
@@ -179,6 +216,16 @@ fn board_gui_regressions() {
         app.windows().len(),
         1,
         "Every note belongs to the same board"
+    );
+    let second = this.borrow().active.clone().unwrap();
+    assert_selected(&this.borrow(), &second);
+    let select_first = selector_button(&this.borrow(), "Uncommitted newest content");
+    select_first.emit_clicked();
+    pump();
+    assert_selected(&this.borrow(), &first);
+    assert!(
+        !this.borrow().cards[&first].editing(),
+        "Switching opens Preview"
     );
     {
         let mut board = this.borrow_mut();
@@ -207,10 +254,9 @@ fn board_gui_regressions() {
         .unwrap()
         .starts_with("✓ "));
 
-    // One column makes the distant selector target deterministic on any display.
+    // Many notes exercise the selector without displaying a card grid.
     let (source, destination) = {
         let mut board = this.borrow_mut();
-        board.flow.set_max_children_per_line(1);
         let source = board.cards.keys().find(|id| *id != &first).unwrap().clone();
         let mut destination = String::new();
         for index in 0..12 {
@@ -253,27 +299,33 @@ fn board_gui_regressions() {
     assert!(!this.borrow().cards[&first]
         .root
         .has_css_class("waynote-active"));
-    let adjustment = this.borrow().scroller.vadjustment();
-    adjustment.set_value(0.0);
+    search.set_text("Distant 11");
+    this.borrow().refresh_selector();
+    assert!(this
+        .borrow()
+        .selector
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .is_none());
     let select_distant = selector_button(&this.borrow(), "Distant 11");
-    // Finishing the source editor queues a render tick before revealing the target.
     select_distant.emit_clicked();
-    let revealed = adjustment.value();
-    assert!(revealed > 0.0, "Fixture must overflow the board");
     pump();
-    assert!(
-        (adjustment.value() - revealed).abs() < 1.0,
-        "Selector reveal moved from {revealed} to {} after rendering (upper={}, page={})",
-        adjustment.value(),
-        adjustment.upper(),
-        adjustment.page_size()
+    assert_selected(&this.borrow(), &destination);
+    assert!(!this.borrow().cards[&source].editing());
+    this.borrow_mut().save_state();
+    assert_eq!(
+        layout::load(&this.borrow().paths).active.as_deref(),
+        Some(destination.as_str())
     );
+    search.set_text("");
+    this.borrow().refresh_selector();
     assert_eq!(this.borrow().active.as_deref(), Some(destination.as_str()));
     assert!(!this.borrow().cards[&destination].editing());
     assert_eq!(
         gtk::prelude::GtkWindowExt::focus(&this.borrow().window),
         this.borrow().cards[&destination].preview.child(),
-        "Locked selection keeps keyboard focus on its selectable preview"
+        "Selection keeps keyboard focus on its selectable preview"
     );
     assert!(this.borrow().cards[&destination]
         .root
@@ -285,13 +337,20 @@ fn board_gui_regressions() {
         .label()
         .unwrap()
         .starts_with("✓ "));
+    this.borrow_mut().cards.get_mut(&first).unwrap().note.locked = false;
+    Controller::edit(&this, &first, None);
+    pump();
     {
         let mut board = this.borrow_mut();
         let card = board.cards.get_mut(&first).unwrap();
-        card.note.locked = false;
         card.editor.buffer().set_text("Local unsaved draft");
         std::fs::write(&card.path, "External content").unwrap();
         assert!(!board.save_card(&first));
+        assert!(
+            !board.select(&destination),
+            "Failed saves prevent switching"
+        );
+        assert_selected(&board, &first);
         assert!(
             !board.hide(),
             "Save conflict must not discard a hidden draft"
@@ -312,6 +371,9 @@ fn board_gui_regressions() {
         let remaining: Vec<_> = board.cards.keys().cloned().collect();
         for id in remaining {
             board.delete(&id);
+            if let Some(id) = &board.active {
+                assert_selected(&board, id);
+            }
         }
         assert!(board.cards.is_empty());
         assert!(board.empty.is_visible());
@@ -321,8 +383,20 @@ fn board_gui_regressions() {
     pump();
     assert!(
         this.borrow().cards.is_empty(),
-        "Deleting the final note leaves an empty board"
+        "Deleting the final note leaves an empty paper"
     );
+    let new = this
+        .borrow()
+        .empty
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Button>()
+        .unwrap();
+    new.emit_clicked();
+    pump();
+    assert_eq!(this.borrow().cards.len(), 1);
+    assert!(!this.borrow().empty.is_visible());
+    assert!(this.borrow().cards.values().next().unwrap().editing());
     assert_eq!(app.windows().len(), 1);
     this.borrow().window.destroy();
 }

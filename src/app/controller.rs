@@ -1,4 +1,4 @@
-//! One resident board. Note files are the model; GTK buffers hold unsaved drafts.
+//! One resident window showing one selected note. GTK buffers hold unsaved drafts.
 use crate::{
     core::{id_policy::UlidGen, markdown, note::Note, reconcile::Known, theme},
     platform::{config, layout, paths, render, store, watcher},
@@ -22,6 +22,7 @@ struct Card {
     blocked: bool,
     root: gtk::Box,
     title: gtk::Label,
+    notes: gtk::MenuButton,
     stack: gtk::Stack,
     preview: gtk::ScrolledWindow,
     editor: gtk::TextView,
@@ -44,9 +45,8 @@ impl Card {
 
 pub struct Controller {
     window: gtk::ApplicationWindow,
-    flow: gtk::FlowBox,
-    scroller: gtk::ScrolledWindow,
-    empty: gtk::Label,
+    pages: gtk::Stack,
+    empty: gtk::Box,
     message: gtk::Label,
     selector: gtk::ListBox,
     search: gtk::SearchEntry,
@@ -97,9 +97,7 @@ fn scroller(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .min_content_height(140)
-        .max_content_height(460)
-        .propagate_natural_height(true)
+        .vexpand(true)
         .child(child)
         .build()
 }
@@ -113,31 +111,22 @@ impl Controller {
         render::install_card_css();
         let state = layout::load(&paths);
         let config = config::load(&paths);
-        let flow = gtk::FlowBox::builder()
-            .selection_mode(gtk::SelectionMode::None)
-            .homogeneous(true)
-            .column_spacing(18)
-            .row_spacing(18)
-            .min_children_per_line(1)
-            .max_children_per_line(4)
-            .valign(gtk::Align::Start)
-            .margin_start(18)
-            .margin_end(18)
-            .margin_top(18)
-            .margin_bottom(18)
-            .build();
-        let scroller = gtk::ScrolledWindow::builder()
+        let pages = gtk::Stack::builder()
             .vexpand(true)
-            .child(&flow)
+            .hhomogeneous(false)
+            .vhomogeneous(false)
             .build();
-        let empty = gtk::Label::new(Some("No notes yet. Create a note to start writing."));
-        empty.set_margin_top(30);
-        empty.set_margin_bottom(30);
+        let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
+        empty.add_css_class("waynote-card");
+        empty.add_css_class(&config.default_color);
+        empty.set_vexpand(true);
+        let prompt = gtk::Label::new(Some("No notes yet. Create a note to start writing."));
+        prompt.set_wrap(true);
+        empty.append(&prompt);
         let message = gtk::Label::new(None);
         message.set_wrap(true);
         message.set_visible(false);
         let new = gtk::Button::with_label("+ New note");
-        let notes = gtk::MenuButton::builder().label("Notes").build();
         let search = gtk::SearchEntry::builder()
             .placeholder_text("Search notes")
             .build();
@@ -157,19 +146,16 @@ impl Controller {
                 .child(&selector)
                 .build(),
         );
-        let selector_popover = gtk::Popover::builder().child(&choices).build();
-        notes.set_popover(Some(&selector_popover));
-        let toolbar = gtk::HeaderBar::new();
-        toolbar.add_css_class("waynote-toolbar");
-        toolbar.set_decoration_layout(Some(":close"));
-        notes.add_css_class("flat");
-        new.add_css_class("flat");
-        toolbar.pack_start(&notes);
-        toolbar.pack_end(&new);
+        let selector_popover = gtk::Popover::builder()
+            .child(&choices)
+            .halign(gtk::Align::Start)
+            .build();
+        new.add_css_class("waynote-control");
+        empty.append(&new);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.append(&message);
         content.append(&empty);
-        content.append(&scroller);
+        content.append(&pages);
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title(if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {
@@ -179,15 +165,14 @@ impl Controller {
             })
             .default_width(state.width.max(360))
             .default_height(state.height.max(300))
+            .decorated(false)
             .child(&content)
             .build();
-        window.add_css_class("waynote-board");
-        window.set_titlebar(Some(&toolbar));
+        window.add_css_class("waynote-window");
         let active = state.active.clone();
         let this = Rc::new(RefCell::new(Self {
             window,
-            flow,
-            scroller,
+            pages,
             empty,
             message,
             selector,
@@ -223,18 +208,6 @@ impl Controller {
             }
             glib::Propagation::Stop
         });
-        let weak = Rc::downgrade(&this);
-        this.borrow()
-            .window
-            .connect_is_active_notify(move |window| {
-                if !window.is_active() {
-                    defer(&weak, |this| {
-                        if !this.borrow().window.is_active() {
-                            this.borrow_mut().finish_edit();
-                        }
-                    });
-                }
-            });
         let keys = gtk::EventControllerKey::new();
         let weak = Rc::downgrade(&this);
         keys.connect_key_pressed(move |_, key, _, modifiers| {
@@ -355,12 +328,12 @@ impl Controller {
             }
             self.add_card(loaded);
         }
-        if self
+        if !self
             .active
             .as_ref()
-            .is_some_and(|id| !self.cards.contains_key(id))
+            .is_some_and(|id| self.cards.contains_key(id))
         {
-            self.active = None;
+            self.active = self.cards.keys().next().cloned();
         }
         self.empty.set_visible(self.cards.is_empty());
         self.refresh_selector();
@@ -371,9 +344,8 @@ impl Controller {
             if let Some(timer) = card.autosave.take() {
                 timer.remove();
             }
-            if let Some(child) = card.root.parent() {
-                self.flow.remove(&child);
-            }
+            card.notes.set_popover(None::<&gtk::Popover>);
+            self.pages.remove(&card.root);
         }
     }
 
@@ -384,7 +356,7 @@ impl Controller {
         root.add_css_class(&loaded.note.color);
         root.set_size_request(300, -1);
         root.set_hexpand(true);
-        root.set_valign(gtk::Align::Start);
+        root.set_vexpand(true);
         root.set_widget_name(&format!("note-{id}"));
         let title = gtk::Label::new(Some(&loaded.note.title()));
         title.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -466,10 +438,39 @@ impl Controller {
         });
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         header.add_css_class("waynote-header");
+        let notes = gtk::MenuButton::builder()
+            .icon_name("view-list-symbolic")
+            .tooltip_text("Select a note")
+            .build();
+        notes.add_css_class("waynote-control");
+        let new = gtk::Button::builder()
+            .icon_name("list-add-symbolic")
+            .tooltip_text("New note")
+            .build();
+        new.add_css_class("waynote-control");
+        let weak = self.weak.clone();
+        new.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Self::create(&this);
+            }
+        });
+        header.append(&notes);
         header.append(&title);
         header.append(&lock);
+        header.append(&new);
         header.append(&menu_button);
-        root.append(&header);
+        let handle = gtk::WindowHandle::builder().child(&header).build();
+        root.append(&handle);
+        title.set_tooltip_text(Some("Click to preview; drag to move"));
+        let preview_click = gtk::GestureClick::new();
+        preview_click.set_button(1);
+        let weak = self.weak.clone();
+        preview_click.connect_released(move |_, _, _, _| {
+            if let Some(this) = weak.upgrade() {
+                this.borrow_mut().finish_edit();
+            }
+        });
+        title.add_controller(preview_click);
         let editor = gtk::TextView::builder()
             .editable(true)
             .cursor_visible(true)
@@ -482,10 +483,9 @@ impl Controller {
         let stack = gtk::Stack::new();
         stack.set_vhomogeneous(false);
         stack.set_hhomogeneous(false);
+        stack.set_vexpand(true);
         let preview = gtk::ScrolledWindow::new();
-        preview.set_min_content_height(140);
-        preview.set_max_content_height(460);
-        preview.set_propagate_natural_height(true);
+        preview.set_vexpand(true);
         preview.set_hscrollbar_policy(gtk::PolicyType::Automatic);
         stack.add_named(&preview, Some("preview"));
         stack.add_named(&scroller(&editor), Some("edit"));
@@ -548,12 +548,7 @@ impl Controller {
         });
         resolve.set_visible(false);
         root.append(&resolve);
-        // FlowBox activation must leave focus with the card's interactive content.
-        let child = gtk::FlowBoxChild::builder()
-            .child(&root)
-            .focusable(false)
-            .build();
-        self.flow.insert(&child, -1);
+        self.pages.add_named(&root, Some(&id));
         let saved_body = loaded.note.body.clone();
         self.cards.insert(
             id.clone(),
@@ -566,6 +561,7 @@ impl Controller {
                 blocked: false,
                 root,
                 title,
+                notes,
                 stack,
                 preview,
                 editor: editor.clone(),
@@ -581,25 +577,6 @@ impl Controller {
             let id = edit_id.clone();
             defer(&weak, move |this| Self::changed(this, &id));
         });
-        let focus = gtk::EventControllerFocus::new();
-        let weak = self.weak.clone();
-        let focus_id = id.clone();
-        focus.connect_leave(move |_| {
-            let id = focus_id.clone();
-            defer(&weak, move |this| {
-                let mut board = this.borrow_mut();
-                let Some(card) = board.cards.get(&id) else {
-                    return;
-                };
-                if card.menu.is_visible() {
-                    return;
-                }
-                if board.active.as_deref() == Some(id.as_str()) && !card.editor.has_focus() {
-                    board.finish_edit();
-                }
-            });
-        });
-        editor.add_controller(focus);
         let weak = self.weak.clone();
         let menu_id = id.clone();
         self.cards[&id].menu.connect_closed(move |_| {
@@ -876,7 +853,7 @@ impl Controller {
             if !board.window.is_visible() {
                 return;
             }
-            if board.active.as_deref() != Some(id) && !board.finish_edit() {
+            if !board.select(id) {
                 return;
             }
             let Some(card) = board.cards.get(id) else {
@@ -887,10 +864,7 @@ impl Controller {
             }
             card.stack.set_visible_child_name("edit");
             card.root.add_css_class("waynote-active");
-            let editor = card.editor.clone();
-            board.active = Some(id.to_string());
-            board.refresh_selector();
-            editor
+            card.editor.clone()
         };
         editor.grab_focus();
         if let Some(line) = line {
@@ -901,7 +875,32 @@ impl Controller {
             buffer.place_cursor(&iter);
         }
     }
+    fn select(&mut self, id: &str) -> bool {
+        if !self.cards.contains_key(id)
+            || (self.active.as_deref() != Some(id) && !self.finish_edit())
+        {
+            return false;
+        }
+        self.active = Some(id.to_string());
+        self.refresh_selector();
+        true
+    }
     fn refresh_selector(&self) {
+        self.pages.set_visible(!self.cards.is_empty());
+        // One shared selector is attached only to the visible note's control.
+        for (id, card) in &self.cards {
+            if self.active.as_deref() != Some(id) && card.notes.popover().is_some() {
+                card.notes.set_popover(None::<&gtk::Popover>);
+            }
+        }
+        if let Some(id) = &self.active {
+            if let Some(card) = self.cards.get(id) {
+                if card.notes.popover().is_none() {
+                    card.notes.set_popover(Some(&self.selector_popover));
+                }
+            }
+            self.pages.set_visible_child_name(id);
+        }
         while let Some(child) = self.selector.first_child() {
             self.selector.remove(&child);
         }
@@ -930,34 +929,17 @@ impl Controller {
             let id = id.clone();
             item.connect_clicked(move |_| {
                 if let Some(this) = weak.upgrade() {
-                    let (scroller, flow, root, preview, locked) = {
+                    let preview = {
                         let mut board = this.borrow_mut();
-                        if !board.finish_edit() {
+                        if !board.finish_edit() || !board.select(&id) {
                             return;
                         }
                         board.selector_popover.popdown();
-                        let Some(card) = board.cards.get(&id) else {
-                            return;
-                        };
-                        let values = (
-                            board.scroller.clone(),
-                            board.flow.clone(),
-                            card.root.clone(),
-                            card.preview.child(),
-                            card.note.locked,
-                        );
+                        let card = &board.cards[&id];
                         card.root.add_css_class("waynote-active");
-                        board.active = Some(id.clone());
-                        board.refresh_selector();
-                        values
+                        card.preview.child()
                     };
-                    if let Some(bounds) = root.compute_bounds(&flow) {
-                        scroller.vadjustment().set_value(bounds.y() as f64);
-                    }
-                    if !locked {
-                        Self::edit(&this, &id, None);
-                    } else if let Some(preview) = preview {
-                        // Otherwise GTK restores focus to the old card and scrolls back.
+                    if let Some(preview) = preview {
                         preview.grab_focus();
                     }
                 }
@@ -1007,7 +989,11 @@ impl Controller {
                 extra: BTreeMap::new(),
                 body: String::new(),
             };
-            board.insert_note(note)
+            let id = board.insert_note(note);
+            if let Some(id) = &id {
+                board.select(id);
+            }
+            id
         };
         if let Some(id) = result {
             let window = this.borrow().window.clone();
@@ -1017,25 +1003,15 @@ impl Controller {
         }
     }
     pub fn show(this: &Rc<RefCell<Self>>) {
-        let (window, first, empty, scroll) = {
+        let (window, first, empty) = {
             let mut board = this.borrow_mut();
             let first = board.initial;
             board.initial = false;
-            (
-                board.window.clone(),
-                first,
-                board.cards.is_empty(),
-                board.state.scroll,
-            )
+            (board.window.clone(), first, board.cards.is_empty())
         };
         window.present();
         if first && empty {
             Self::create(this);
-        } else {
-            let weak = Rc::downgrade(this);
-            defer(&weak, move |this| {
-                this.borrow().scroller.vadjustment().set_value(scroll)
-            });
         }
     }
     pub fn toggle(this: &Rc<RefCell<Self>>) {
@@ -1051,10 +1027,9 @@ impl Controller {
             self.state.width = self.window.width().max(360);
             self.state.height = self.window.height().max(300);
         }
-        self.state.scroll = self.scroller.vadjustment().value();
         self.state.active = self.active.clone();
         if let Err(e) = layout::save(&self.paths, &self.state) {
-            self.report(&format!("Cannot save board position: {e}"));
+            self.report(&format!("Cannot save window state: {e}"));
         }
     }
     pub fn hide(&mut self) -> bool {

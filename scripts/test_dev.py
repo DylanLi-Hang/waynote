@@ -139,6 +139,21 @@ class DevelopmentTest(unittest.TestCase):
             self.assertIn('action = "enable"', code)
             self.assertNotIn("window_rule", code)
 
+    def test_floating_restores_note_size_instead_of_tiled_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            layout = root / "state/waynote/layout.toml"
+            layout.parent.mkdir(parents=True)
+            with patch.object(dev, "WORK", root), \
+                    patch.dict(dev.os.environ, HYPRLAND_INSTANCE_SIGNATURE="test"), \
+                    patch.object(dev, "dev_client", return_value={"pid": 123}), \
+                    patch.object(dev, "lua") as lua:
+                dev.float_window({"child_pid": 123})
+                self.assertIn("x = 400, y = 440", lua.call_args.args[0])
+                layout.write_text("width = 420\nheight = 480\n")
+                dev.float_window({"child_pid": 123})
+                self.assertIn("x = 420, y = 480", lua.call_args.args[0])
+
     def test_stale_pid_never_targets_this_process(self):
         self.assertFalse(dev.owned_process({"pid": dev.os.getpid()}))
 

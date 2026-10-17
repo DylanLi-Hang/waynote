@@ -34,32 +34,13 @@ pub fn install_card_css() {
 }
 
 const CARD_CSS: &str = "
-.waynote-board { background: #eeeae2; }
-.waynote-toolbar {
-    background: #eeeae2;
-    background-image: none;
-    border-bottom: 1px solid rgba(64,58,40,0.10);
-    box-shadow: none;
-    color: #6e6447;
-    min-height: 42px;
-}
-.waynote-toolbar button {
-    color: #6e6447;
-    background: transparent;
-    background-image: none;
-    border: none;
-    box-shadow: none;
-}
-.waynote-toolbar button:hover, .waynote-toolbar button:checked {
-    background: rgba(64,58,40,0.08);
-}
-.waynote-board flowboxchild { padding: 0; background: transparent; }
+.waynote-window { background: transparent; }
 .waynote-table-cell { padding: 5px 6px; border-bottom: 1px solid rgba(0,0,0,0.14); }
 .waynote-card {
     border-radius: 10px;
     padding: 14px 16px;
     font-size: 15px;
-    box-shadow: 0 3px 12px rgba(0,0,0,0.18);
+    box-shadow: none;
 }
 .waynote-card.yellow, .waynote-swatch.yellow {
     background: #F6EBA8;
@@ -92,7 +73,7 @@ const CARD_CSS: &str = "
 .waynote-card:hover { border-color: rgba(0,0,0,0.25); }
 .waynote-card.waynote-active {
     border-color: rgba(64,58,40,0.40);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.24);
+    box-shadow: none;
 }
 /* Markdown task checkboxes (GTK4 tree: checkbutton > check). Replace Adwaita's
    heavy dark indicator with a light outline box in the paper's ink — muted when
@@ -154,7 +135,7 @@ const CARD_CSS: &str = "
     border-bottom: 1px solid rgba(0,0,0,0.10);
 }
 .waynote-header-title { color: #6e6447; font-size: 0.8em; font-weight: 600; }
-.waynote-control > button {
+.waynote-control > button, button.waynote-control {
     min-width: 24px;
     min-height: 24px;
     padding: 0 3px;
@@ -166,11 +147,11 @@ const CARD_CSS: &str = "
     color: #6e6447;
     -gtk-icon-size: 16px;
 }
-.waynote-control > button image { opacity: 0.55; }
-.waynote-control > button:hover, .waynote-control > button:checked {
+.waynote-control > button image, button.waynote-control image { opacity: 0.55; }
+.waynote-control > button:hover, .waynote-control > button:checked, button.waynote-control:hover {
     background: rgba(64,58,40,0.08);
 }
-.waynote-control > button:hover image, .waynote-control > button:checked image { opacity: 1; }
+.waynote-control > button:hover image, .waynote-control > button:checked image, button.waynote-control:hover image { opacity: 1; }
 .waynote-color-palette { padding: 8px; }
 .waynote-swatch {
     min-width: 22px;

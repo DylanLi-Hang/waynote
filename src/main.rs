@@ -18,7 +18,7 @@ fn command(args: &[String]) -> Option<&'static str> {
 fn main() -> glib::ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if command(&args).is_none() {
-        println!("waynote — Markdown notes\n\nUsage: waynote [summon|toggle|new|show-all|hide-all|quit]\nBind Meta+N to `waynote summon`. A visible board always hides, regardless of focus.");
+        println!("waynote — Markdown notes\n\nUsage: waynote [summon|toggle|new|show-all|hide-all|quit]\nBind Meta+N to `waynote summon`. A visible window always hides, regardless of focus.");
         return glib::ExitCode::SUCCESS;
     }
     let id = if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {

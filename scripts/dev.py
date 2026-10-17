@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 
 REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / "target" / "dev"
@@ -39,7 +40,7 @@ def seed(root=WORK):
             '---\nid: 01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\ncolor: blue\n---\n'
             '# [DEV] Waynote\n\nIsolated development notes.\n\n'
             '- [ ] Try a checkbox\n- [x] Development data is separate\n\n'
-            'Click text to edit; leaving the editor saves and shows Preview.\n')
+            'Click text to edit; click the title or hide to show Preview.\n')
 
 
 def binds():
@@ -71,9 +72,17 @@ def float_window(state):
         if time.monotonic() >= deadline:
             raise RuntimeError("Development board did not map within 3 seconds")
         time.sleep(0.1)
+    # Mapping in a tiling layout can overwrite GTK's requested note size.
+    try:
+        geometry = tomllib.loads((WORK / "state/waynote/layout.toml").read_text())
+        width, height = int(geometry["width"]), int(geometry["height"])
+    except (OSError, ValueError, KeyError, TypeError):
+        width, height = 400, 440
     lua('for _, window in ipairs(hl.get_windows()) do '
         f'if window.class == {json.dumps(APP_CLASS)} and window.pid == {int(state["child_pid"])} then '
-        'hl.dispatch(hl.dsp.window.float({ window = window, action = "enable" })) end end')
+        'hl.dispatch(hl.dsp.window.float({ window = window, action = "enable" })); '
+        f'hl.dispatch(hl.dsp.window.resize({{ window = window, x = {max(360, width)}, '
+        f'y = {max(300, height)}, relative = false }})) end end')
 
 
 def original_binding(current, config):

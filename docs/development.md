@@ -24,7 +24,9 @@ A save error keeps the draft visible so it can be copied or retried.
 
 While the runner lives, Meta+N drives the development app. The original binding
 is restored on normal exit or Ctrl+C/SIGTERM. Only the running compositor is
-changed; no NixOS or Home Manager activation is performed.
+changed; no NixOS or Home Manager activation is performed. The runner floats
+only its own development window and restores the saved note size (400 × 440
+on the first run), instead of keeping the compositor's initial tiling size.
 
 The binding helper uses Hyprland's Lua API. It recovers the original single-line
 `hl.bind("SUPER + N", hl.dsp.exec_cmd(...), ...)` from
@@ -60,5 +62,5 @@ logic and GTK behavior; use the real compositor to evaluate focus, shortcuts,
 stacking and resizing. Hyprland results do not establish KDE compatibility.
 
 Logs are appended to `target/dev/app.log`; saved development notes are under
-`target/dev/data/waynote/notes/`. The board uses a regular GTK window, so its
+`target/dev/data/waynote/notes/`. The note uses a regular GTK window, so its
 floating and stacking policy belongs to the compositor; see the README.

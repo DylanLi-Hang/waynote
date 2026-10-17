@@ -1,14 +1,18 @@
 # Waynote
 
-A single-window Markdown notes board for Linux, forked from
+A lightweight Markdown sticky note for Linux, forked from
 [mryll/waynote](https://github.com/mryll/waynote).
 
-- **Meta+N shows or hides the whole board.** A visible board always hides,
+- **Meta+N shows or hides the window.** A visible window always hides,
   including when another app has focus. It stays running while hidden.
-- **Notes ▾** searches and reveals existing notes; **+ New note** creates a card.
-- Click an unlocked note to edit its Markdown. Leaving it saves and returns to
-  Preview. Typing is autosaved; failed saves keep the draft and show an error.
-- Each card's **⋯** menu contains Copy, Color, Lock and Delete. Lock makes content
+- The header's **Notes** button opens a searchable selection panel. One note is
+  visible at a time; switching saves the current draft and opens the selected note in Preview.
+  **＋** creates and selects a note, ready to type.
+- Click an unlocked note to edit its Markdown. Mouse movement and window focus
+  changes keep Edit active. Click the paper's title or hide the window to save
+  and return to Preview. Typing is autosaved; failed saves keep the draft and
+  show an error.
+- The note's **⋯** menu contains Copy, Color, Lock and Delete. Lock makes content
   read-only; selection, links and copying remain available.
 - Markdown includes tables, task checkboxes, links, code and local images.
   Checkboxes persist immediately without entering Edit mode.
@@ -57,7 +61,8 @@ bind = SUPER, N, exec, waynote toggle
 windowrule = float, class:^(dev\.mryll\.waynote)$
 ```
 
-The board is a regular GTK window: drag its header or use the compositor's move
+The paper fills a regular GTK window, with all controls in its own header and
+no surrounding application frame. Drag the title or use the compositor's move
 and resize controls. Floating windows appear above tiled windows on Hyprland;
 stacking relative to other floating windows is controlled by the compositor.
 On KDE, create a window rule matching application ID `dev.mryll.waynote`, set
@@ -65,11 +70,11 @@ On KDE, create a window rule matching application ID `dev.mryll.waynote`, set
 KDE has not been verified in this development session.
 
 Other commands are `new`, `summon`, `show-all`, `hide-all` and `quit`.
-Only `toggle` is needed for everyday use; creation is available in the toolbar.
+Only `toggle` is needed for everyday use; creation is available in the note header.
 
 ## Development
 
 [Developing and testing on NixOS](docs/development.md) documents the isolated
-runner. The implementation consists of a GTK board/controller, Markdown parser
+runner. The implementation consists of a GTK window/controller, Markdown parser
 and renderer, and filesystem persistence/watcher. There is no layer-shell or
 tray dependency.

@@ -1,4 +1,4 @@
-//! Presentation state for the single board. Old per-note geometry is ignored.
+//! Window size and selected note. Old per-note geometry is ignored.
 use super::{paths::Paths, store::atomic_write};
 use serde::{Deserialize, Serialize};
 
@@ -7,15 +7,13 @@ use serde::{Deserialize, Serialize};
 pub struct BoardState {
     pub width: i32,
     pub height: i32,
-    pub scroll: f64,
     pub active: Option<String>,
 }
 impl Default for BoardState {
     fn default() -> Self {
         Self {
-            width: 920,
-            height: 680,
-            scroll: 0.0,
+            width: 400,
+            height: 440,
             active: None,
         }
     }
@@ -39,7 +37,7 @@ mod tests {
     fn old_geometry_is_ignored_without_preventing_board_defaults() {
         let state: BoardState =
             toml::from_str("[notes.old.geometry]\nx=10\ny=20\nw=280\nh=220").unwrap();
-        assert_eq!(state.width, 920);
+        assert_eq!(state.width, 400);
         assert!(state.active.is_none());
     }
     #[test]
@@ -47,12 +45,10 @@ mod tests {
         let state = BoardState {
             width: 1100,
             height: 700,
-            scroll: 180.0,
             active: Some("id".into()),
         };
         let loaded: BoardState = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
         assert_eq!(loaded.active, state.active);
-        assert_eq!(loaded.scroll, 180.0);
         assert_eq!((loaded.width, loaded.height), (1100, 700));
     }
 }
