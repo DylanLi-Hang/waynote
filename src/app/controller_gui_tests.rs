@@ -172,9 +172,13 @@ fn board_gui_regressions() {
     select_locked.emit_clicked();
     pump();
     assert_eq!(this.borrow().active.as_deref(), Some(first.as_str()));
-    assert!(this.borrow().cards[&first].root.has_css_class("waynote-active"));
+    assert!(this.borrow().cards[&first]
+        .root
+        .has_css_class("waynote-active"));
     assert!(selector_button(&this.borrow(), "- [ ] Locked task")
-        .label().unwrap().starts_with("✓ "));
+        .label()
+        .unwrap()
+        .starts_with("✓ "));
 
     // One column makes the distant selector target deterministic on any display.
     let (source, destination) = {
@@ -183,14 +187,16 @@ fn board_gui_regressions() {
         let source = board.cards.keys().find(|id| *id != &first).unwrap().clone();
         let mut destination = String::new();
         for index in 0..12 {
-            destination = board.insert_note(Note {
-                id: ulid::Ulid::new().to_string(),
-                color: "yellow".into(),
-                locked: true,
-                tags: vec![],
-                extra: BTreeMap::new(),
-                body: format!("# Distant {index}\nRead-only target"),
-            }).unwrap();
+            destination = board
+                .insert_note(Note {
+                    id: ulid::Ulid::new().to_string(),
+                    color: "yellow".into(),
+                    locked: true,
+                    tags: vec![],
+                    extra: BTreeMap::new(),
+                    body: format!("# Distant {index}\nRead-only target"),
+                })
+                .unwrap();
         }
         (source, destination)
     };
@@ -198,7 +204,28 @@ fn board_gui_regressions() {
     Controller::edit(&this, &source, None);
     pump();
     assert!(this.borrow().cards[&source].editing());
-    assert!(!this.borrow().cards[&first].root.has_css_class("waynote-active"));
+    let menu = this.borrow().cards[&source].menu.clone();
+    menu.popup();
+    pump();
+    let (notes, search) = {
+        let board = this.borrow();
+        (board.selector_popover.clone(), board.search.clone())
+    };
+    menu.popdown();
+    notes.popup();
+    search.grab_focus();
+    pump();
+    assert!(
+        gtk::prelude::GtkWindowExt::focus(&this.borrow().window)
+            .is_some_and(|focus| focus.is_ancestor(&search)),
+        "Closing a card menu must not steal Notes search focus"
+    );
+    notes.popdown();
+    Controller::edit(&this, &source, None);
+    pump();
+    assert!(!this.borrow().cards[&first]
+        .root
+        .has_css_class("waynote-active"));
     let adjustment = this.borrow().scroller.vadjustment();
     adjustment.set_value(0.0);
     let select_distant = selector_button(&this.borrow(), "Distant 11");
@@ -207,13 +234,30 @@ fn board_gui_regressions() {
     let revealed = adjustment.value();
     assert!(revealed > 0.0, "Fixture must overflow the board");
     pump();
-    assert!((adjustment.value() - revealed).abs() < 1.0,
-        "Delayed source render must not undo selector reveal");
+    assert!(
+        (adjustment.value() - revealed).abs() < 1.0,
+        "Selector reveal moved from {revealed} to {} after rendering (upper={}, page={})",
+        adjustment.value(),
+        adjustment.upper(),
+        adjustment.page_size()
+    );
     assert_eq!(this.borrow().active.as_deref(), Some(destination.as_str()));
-    assert!(this.borrow().cards[&destination].root.has_css_class("waynote-active"));
-    assert!(!this.borrow().cards[&source].root.has_css_class("waynote-active"));
+    assert!(!this.borrow().cards[&destination].editing());
+    assert_eq!(
+        gtk::prelude::GtkWindowExt::focus(&this.borrow().window),
+        this.borrow().cards[&destination].preview.child(),
+        "Locked selection keeps keyboard focus on its selectable preview"
+    );
+    assert!(this.borrow().cards[&destination]
+        .root
+        .has_css_class("waynote-active"));
+    assert!(!this.borrow().cards[&source]
+        .root
+        .has_css_class("waynote-active"));
     assert!(selector_button(&this.borrow(), "Distant 11")
-        .label().unwrap().starts_with("✓ "));
+        .label()
+        .unwrap()
+        .starts_with("✓ "));
     {
         let mut board = this.borrow_mut();
         let card = board.cards.get_mut(&first).unwrap();

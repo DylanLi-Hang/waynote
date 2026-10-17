@@ -912,7 +912,7 @@ impl Controller {
             let id = id.clone();
             item.connect_clicked(move |_| {
                 if let Some(this) = weak.upgrade() {
-                    let (scroller, flow, root, locked) = {
+                    let (scroller, flow, root, preview, locked) = {
                         let mut board = this.borrow_mut();
                         if !board.finish_edit() {
                             return;
@@ -925,6 +925,7 @@ impl Controller {
                             board.scroller.clone(),
                             board.flow.clone(),
                             card.root.clone(),
+                            card.preview.child(),
                             card.note.locked,
                         );
                         card.root.add_css_class("waynote-active");
@@ -937,6 +938,9 @@ impl Controller {
                     }
                     if !locked {
                         Self::edit(&this, &id, None);
+                    } else if let Some(preview) = preview {
+                        // Otherwise GTK restores focus to the old card and scrolls back.
+                        preview.grab_focus();
                     }
                 }
             });
