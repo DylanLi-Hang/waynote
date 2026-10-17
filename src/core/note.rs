@@ -1,23 +1,12 @@
 use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Layer {
-    #[default]
-    Front,
-    Desktop,
-}
 
 #[derive(Clone, Debug)]
 pub struct Note {
     pub id: String,
     pub color: String,
-    pub pinned: bool,
     /// Content read-only: editing, checkbox toggles and image paste are blocked
-    /// while true. Moving/resizing/recolouring/layer/pin/delete still work.
+    /// while true. Copying, recolouring and deleting remain available.
     pub locked: bool,
-    pub layer: Layer,
     pub tags: Vec<String>,
     pub extra: BTreeMap<String, serde_yaml_ng::Value>,
     pub body: String,
@@ -96,9 +85,7 @@ mod tests {
         Note {
             id: String::new(),
             color: "yellow".to_string(),
-            pinned: false,
             locked: false,
-            layer: Layer::Front,
             tags: vec![],
             extra: BTreeMap::new(),
             body: body.to_string(),

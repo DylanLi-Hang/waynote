@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
-use crate::core::note::{Layer, Note};
+use crate::core::note::Note;
 
 #[derive(Serialize, Deserialize)]
 struct Frontmatter {
@@ -9,11 +9,7 @@ struct Frontmatter {
     #[serde(default = "default_color")]
     color: String,
     #[serde(default)]
-    pinned: bool,
-    #[serde(default)]
     locked: bool,
-    #[serde(default)]
-    layer: Layer,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(flatten)]
@@ -25,9 +21,7 @@ impl Default for Frontmatter {
         Self {
             id: String::new(),
             color: default_color(),
-            pinned: false,
             locked: false,
-            layer: Layer::default(),
             tags: vec![],
             extra: BTreeMap::new(),
         }
@@ -49,9 +43,7 @@ pub fn parse(file_contents: &str) -> Note {
     Note {
         id: frontmatter.id,
         color: frontmatter.color,
-        pinned: frontmatter.pinned,
         locked: frontmatter.locked,
-        layer: frontmatter.layer,
         tags: frontmatter.tags,
         extra: frontmatter.extra,
         body: body.to_string(),
@@ -104,13 +96,7 @@ fn serialize_to_yaml(note: &Note) -> String {
     let mut mapping = serde_yaml_ng::Mapping::new();
     mapping.insert(yaml_str("id"), yaml_str(&note.id));
     mapping.insert(yaml_str("color"), yaml_str(&note.color));
-    mapping.insert(yaml_str("pinned"), serde_yaml_ng::Value::Bool(note.pinned));
     mapping.insert(yaml_str("locked"), serde_yaml_ng::Value::Bool(note.locked));
-    let layer_str = match note.layer {
-        Layer::Front => "front",
-        Layer::Desktop => "desktop",
-    };
-    mapping.insert(yaml_str("layer"), yaml_str(layer_str));
     let tags: Vec<serde_yaml_ng::Value> = note.tags.iter().map(|t| yaml_str(t)).collect();
     mapping.insert(yaml_str("tags"), serde_yaml_ng::Value::Sequence(tags));
     for (k, v) in &note.extra {
@@ -130,7 +116,6 @@ fn yaml_str(s: &str) -> serde_yaml_ng::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::note::Layer;
 
     const FULL_FILE: &str = "\
 ---
@@ -145,14 +130,23 @@ body here
 ";
 
     #[test]
-    fn all_known_keys_and_body_parsed_correctly() {
+    fn known_keys_and_legacy_metadata_parsed_without_changing_content() {
         let note = parse(FULL_FILE);
         assert_eq!(note.id, "01JZ9P6S0R8ZX0G8N3Z4V7Y8QK");
         assert_eq!(note.color, "blue");
-        assert!(note.pinned);
-        assert_eq!(note.layer, Layer::Desktop);
+        assert_eq!(note.extra["pinned"], serde_yaml_ng::Value::Bool(true));
+        assert_eq!(note.extra["layer"].as_str(), Some("desktop"));
         assert_eq!(note.tags, vec!["inbox", "work"]);
         assert_eq!(note.body, "# Hello\nbody here\n");
+    }
+
+    #[test]
+    fn legacy_metadata_round_trips_as_unknown_fields() {
+        let original = parse(FULL_FILE);
+        let restored = parse(&serialize(&original));
+        assert_eq!(restored.id, original.id);
+        assert_eq!(restored.body, original.body);
+        assert_eq!(restored.extra, original.extra);
     }
 
     #[test]
@@ -172,8 +166,6 @@ body here
         let note2 = parse(&serialized);
         assert_eq!(note1.id, note2.id);
         assert_eq!(note1.color, note2.color);
-        assert_eq!(note1.pinned, note2.pinned);
-        assert_eq!(note1.layer, note2.layer);
         assert_eq!(note1.tags, note2.tags);
         assert_eq!(note1.body, note2.body);
         assert_eq!(note1.extra.get("foo"), note2.extra.get("foo"));
@@ -185,8 +177,7 @@ body here
         let note = parse(input);
         assert_eq!(note.id, "");
         assert_eq!(note.color, "yellow");
-        assert!(!note.pinned);
-        assert_eq!(note.layer, Layer::Front);
+        assert!(note.extra.is_empty());
         assert!(note.tags.is_empty());
         assert_eq!(note.body, "just a plain body\n");
     }
@@ -200,19 +191,18 @@ body here
     }
 
     #[test]
-    fn serialize_emits_lowercase_layer_and_empty_tags_array() {
+    fn new_notes_do_not_emit_removed_feature_fields() {
         let note = Note {
             id: "x".to_string(),
             color: "yellow".to_string(),
-            pinned: false,
             locked: false,
-            layer: Layer::Front,
             tags: vec![],
             extra: BTreeMap::new(),
             body: "body\n".to_string(),
         };
         let s = serialize(&note);
-        assert!(s.contains("layer: front"), "layer should be lowercase 'front'");
+        assert!(!s.contains("pinned:"));
+        assert!(!s.contains("layer:"));
         assert!(s.contains("tags: []"), "empty tags should render as flow-style []");
     }
 

@@ -273,7 +273,7 @@ mod tests {
     /// Minimal frontmatter + body with the given id.
     fn note_content(id: &str) -> String {
         format!(
-            "---\nid: \"{id}\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# Test Note\n"
+            "---\nid: \"{id}\"\ncolor: yellow\ntags: []\n---\n# Test Note\n"
         )
     }
 

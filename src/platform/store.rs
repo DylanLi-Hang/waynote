@@ -8,9 +8,6 @@ use crate::core::id_policy::{IdGen, RawId, resolve};
 use crate::core::note::Note;
 use crate::platform::paths::Paths;
 
-/// Geometry keys that belong in the layout file, not in the note's frontmatter.
-const GEOMETRY_KEYS: &[&str] = &["x", "y", "w", "h", "output", "output_desc", "logical"];
-
 /// A note that has been loaded from disk, with its resolved path and content hash.
 pub struct LoadedNote {
     pub path: PathBuf,
@@ -61,10 +58,10 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
     // Sort for deterministic ordering.
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Parse all files and strip geometry keys from extra.
+    // Preserve unrecognized frontmatter as inert metadata.
     let notes: Vec<Note> = files
         .iter()
-        .map(|(_, c, _)| strip_geometry(frontmatter::parse(c)))
+        .map(|(_, c, _)| frontmatter::parse(c))
         .collect();
 
     // Build RawId slice — borrow from local strings to satisfy lifetimes.
@@ -137,14 +134,6 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
     }
 
     Ok(results)
-}
-
-/// Strip layout-only geometry keys from a note's extra map.
-fn strip_geometry(mut note: Note) -> Note {
-    for key in GEOMETRY_KEYS {
-        note.extra.remove(*key);
-    }
-    note
 }
 
 /// Extract the potential id prefix from a filename `<id>-<slug>.md` or `<id>.md`.
@@ -270,7 +259,7 @@ pub fn atomic_write(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::core::id_policy::IdGen;
-    use crate::core::note::{Layer, Note};
+    use crate::core::note::Note;
     use crate::platform::paths::Paths;
     use std::collections::BTreeMap;
 
@@ -306,9 +295,7 @@ mod tests {
         Note {
             id: id.to_string(),
             color: "blue".to_string(),
-            pinned: true,
             locked: false,
-            layer: Layer::Desktop,
             tags: vec!["inbox".to_string(), "work".to_string()],
             extra,
             body: "# My Note\nsome body\n".to_string(),
@@ -343,7 +330,7 @@ mod tests {
         fs::create_dir_all(&notes_dir).unwrap();
 
         // File with empty id in frontmatter.
-        let content = "---\nid: \"\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# No Id\n";
+        let content = "---\nid: \"\"\ncolor: yellow\ntags: []\n---\n# No Id\n";
         fs::write(notes_dir.join("no-id.md"), content).unwrap();
 
         let mut gen = SeqIdGen::new();
@@ -391,7 +378,7 @@ mod tests {
         // Write a file manually with a valid ULID in both filename and frontmatter,
         // but with non-canonical YAML formatting (extra spaces, non-standard key order).
         // Re-serializing this note would produce different bytes.
-        let non_canonical = "---\nid:   \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor:  \"yellow\"\npinned:  false\nlayer:  \"front\"\ntags:  []\n---\n# Non-canonical\n";
+        let non_canonical = "---\nid:   \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor:  \"yellow\"\ntags:  []\n---\n# Non-canonical\n";
         let filename = format!("{}-non-canonical.md", VALID_ID);
         fs::write(notes_dir.join(&filename), non_canonical).unwrap();
 
@@ -426,7 +413,7 @@ mod tests {
         fs::create_dir_all(&notes_dir).unwrap();
 
         // File with missing id — load_all will assign one and rename it.
-        let content = "---\nid: \"\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# Rename Test\n";
+        let content = "---\nid: \"\"\ncolor: yellow\ntags: []\n---\n# Rename Test\n";
         fs::write(notes_dir.join("no-id.md"), content).unwrap();
 
         let mut gen = SeqIdGen::new();
@@ -482,7 +469,7 @@ mod tests {
 
         let id = "01HZX5K3P8QR7V9WMN2T4Y6BCD"; // valid ULID
         let content = format!(
-            "---\nid: {id}\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# New Title\n"
+            "---\nid: {id}\ncolor: yellow\ntags: []\n---\n# New Title\n"
         );
         let old_name = format!("{id}-old-slug.md");
         fs::write(notes_dir.join(&old_name), &content).unwrap();
@@ -560,7 +547,7 @@ mod tests {
         let base = save_to(&target, &note).unwrap();
 
         // External edit on disk.
-        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# External\n").unwrap();
+        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\ntags: []\n---\n# External\n").unwrap();
 
         let mut in_mem = make_note(VALID_ID);
         in_mem.body = "# Frozen\nin-memory body\n".to_string();
@@ -586,7 +573,7 @@ mod tests {
         let base = save_to(&target, &note).unwrap();
 
         // External edit to force conflict.
-        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# External\n").unwrap();
+        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\ntags: []\n---\n# External\n").unwrap();
 
         let mut in_mem = make_note(VALID_ID);
         in_mem.body = "# Changed Title\nbody\n".to_string();
@@ -619,27 +606,27 @@ mod tests {
     }
 
     #[test]
-    fn geometry_keys_absent_from_loaded_note_extra() {
+    fn loading_and_saving_preserves_legacy_metadata_without_runtime_fields() {
         let dir = tempfile::tempdir().unwrap();
         let paths = make_paths(dir.path().to_str().unwrap());
         let notes_dir = paths.notes_dir();
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // File with every layout/geometry key in frontmatter (as might come from an
-        // external editor or an older write). None of these belong in the `.md`.
-        let content = "---\nid: \"\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\nx: 100\ny: 200\nw: 300\nh: 400\noutput: HDMI-1\noutput_desc: Some Monitor\nlogical: [0, 0, 1920, 1080]\n---\n# Geo Test\n";
+        // Removed features use the same unknown-field path as custom metadata.
+        let content = "---\nid: \"\"\ncolor: yellow\npinned: true\nlayer: desktop\ntags: []\nx: 100\ny: 200\nw: 300\nh: 400\noutput: HDMI-1\noutput_desc: Some Monitor\nlogical: [0, 0, 1920, 1080]\n---\n# Geo Test\n";
         fs::write(notes_dir.join("geo-test.md"), content).unwrap();
 
         let mut gen = SeqIdGen::new();
         let loaded = load_all(&paths, &mut gen).unwrap();
         assert_eq!(loaded.len(), 1);
-        let extra = &loaded[0].note.extra;
-
-        for key in &["x", "y", "w", "h", "output", "output_desc", "logical"] {
-            assert!(
-                !extra.contains_key(*key),
-                "geometry key '{key}' must not be in note.extra after load"
-            );
-        }
+        let note = &loaded[0].note;
+        assert_eq!(note.body, "# Geo Test\n");
+        let original = frontmatter::parse(content);
+        assert_eq!(note.extra, original.extra);
+        save_to(&loaded[0].path, note).unwrap();
+        let restored = frontmatter::parse(&fs::read_to_string(&loaded[0].path).unwrap());
+        assert_eq!(restored.extra, original.extra);
+        assert_eq!(restored.body, original.body);
+        assert_eq!(restored.id, note.id);
     }
 }
