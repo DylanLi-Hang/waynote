@@ -1,273 +1,45 @@
-// platform::layout is not yet wired into the binary entry point. Suppress
-// dead-code warnings until it is consumed by the Plan 5 lifecycle. Remove once wired into binary.
-#![allow(dead_code)]
-
-use std::collections::BTreeMap;
-
+//! Presentation state for the single board. Old per-note geometry is ignored.
 use serde::{Deserialize, Serialize};
+use super::{paths::Paths, store::atomic_write};
 
-use crate::platform::paths::Paths;
-use crate::platform::store::atomic_write;
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, Debug, Default)]
-pub struct Geometry {
-    pub output: String,
-    pub output_desc: String,
-    pub logical: [i32; 4],
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BoardState {
+    pub width: i32,
+    pub height: i32,
+    pub scroll: f64,
+    pub active: Option<String>,
 }
-
-#[derive(Serialize, Deserialize)]
-struct NoteLayout {
-    geometry: Geometry,
-    /// Rolled up to its header bar (window-shade). Presentation state, kept
-    /// beside the geometry rather than inside it: `Geometry` stays purely
-    /// spatial, so its `PartialEq` and the monitor resolvers never see it.
-    /// `#[serde(default)]` keeps pre-collapse layout files loadable.
-    #[serde(default)]
-    collapsed: bool,
-}
-
-#[derive(Serialize, Deserialize, Default)]
-struct LayoutFile {
-    #[serde(default)]
-    notes: BTreeMap<String, NoteLayout>,
-}
-
-#[derive(Default)]
-pub struct Layout {
-    inner: LayoutFile,
-}
-
-impl Layout {
-    pub fn get(&self, id: &str) -> Option<&Geometry> {
-        self.inner.notes.get(id).map(|nl| &nl.geometry)
-    }
-
-    /// Whether note `id` is rolled up. Unknown ids are not collapsed.
-    pub fn collapsed(&self, id: &str) -> bool {
-        self.inner.notes.get(id).is_some_and(|nl| nl.collapsed)
-    }
-
-    /// Store geometry AND collapsed together — writing one without the other
-    /// would silently drop the roll-up state on every drag/resize commit.
-    pub fn set(&mut self, id: &str, g: Geometry, collapsed: bool) {
-        self.inner
-            .notes
-            .insert(id.to_string(), NoteLayout { geometry: g, collapsed });
-    }
-
-    pub fn remove(&mut self, id: &str) {
-        self.inner.notes.remove(id);
+impl Default for BoardState {
+    fn default() -> Self {
+        Self { width: 920, height: 680, scroll: 0.0, active: None }
     }
 }
-
-/// Load layout from disk. Returns `Layout::default()` if missing or corrupt.
-pub fn load(paths: &Paths) -> Layout {
+pub fn load(paths: &Paths) -> BoardState {
+    std::fs::read_to_string(paths.layout_file()).ok()
+        .and_then(|s| toml::from_str(&s).ok()).unwrap_or_default()
+}
+pub fn save(paths: &Paths, state: &BoardState) -> std::io::Result<()> {
     let path = paths.layout_file();
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Layout::default(),
-        Err(e) => {
-            eprintln!("waynote: failed to read layout file {}: {}", path.display(), e);
-            return Layout::default();
-        }
-    };
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("waynote: layout file is not valid UTF-8: {}", e);
-            return Layout::default();
-        }
-    };
-    match toml::from_str::<LayoutFile>(text) {
-        Ok(lf) => Layout { inner: lf },
-        Err(e) => {
-            eprintln!("waynote: layout file is corrupt ({}); starting fresh", e);
-            Layout::default()
-        }
-    }
-}
-
-/// Serialize layout to TOML and write atomically.
-pub fn save(paths: &Paths, layout: &Layout) -> std::io::Result<()> {
-    let path = paths.layout_file();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let text = toml::to_string_pretty(&layout.inner).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-    })?;
+    std::fs::create_dir_all(path.parent().unwrap())?;
+    let text = toml::to_string(state).map_err(std::io::Error::other)?;
     atomic_write(&path, text.as_bytes())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform::paths::Paths;
-
-    fn make_paths(base: &str) -> Paths {
-        let base = base.to_string();
-        Paths::from_env(|k| match k {
-            "XDG_STATE_HOME" => Some(base.clone()),
-            _ => None,
-        })
-    }
-
-    fn sample_geometry(tag: i32) -> Geometry {
-        Geometry {
-            output: format!("HDMI-{tag}"),
-            output_desc: format!("Monitor {tag}"),
-            logical: [0, 0, 1920, 1080],
-            x: tag * 100,
-            y: tag * 200,
-            w: 280,
-            h: 220,
-        }
-    }
-
     #[test]
-    fn two_notes_geometry_round_trips_through_save_and_load() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-
-        let id1 = "01JZ9P6S0R8ZX0G8N3Z4V7Y8QA";
-        let id2 = "01JZ9P6S0R8ZX0G8N3Z4V7Y8QB";
-        let g1 = sample_geometry(1);
-        let g2 = sample_geometry(2);
-
-        let mut layout = Layout::default();
-        layout.set(id1, g1.clone(), false);
-        layout.set(id2, g2.clone(), false);
-
-        save(&paths, &layout).unwrap();
-
-        let loaded = load(&paths);
-        assert_eq!(loaded.get(id1), Some(&g1));
-        assert_eq!(loaded.get(id2), Some(&g2));
+    fn old_geometry_is_ignored_without_preventing_board_defaults() {
+        let state: BoardState = toml::from_str("[notes.old.geometry]\nx=10\ny=20\nw=280\nh=220").unwrap();
+        assert_eq!(state.width, 920);
+        assert!(state.active.is_none());
     }
-
     #[test]
-    fn load_of_missing_file_returns_empty_layout() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-
-        let layout = load(&paths);
-        assert_eq!(layout.get("nonexistent"), None);
-    }
-
-    #[test]
-    fn load_of_corrupt_file_returns_empty_layout_without_panic() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-
-        // Write corrupt content to the layout file path.
-        let path = paths.layout_file();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, b"this is not valid toml {{{{ garbled").unwrap();
-
-        let layout = load(&paths);
-        assert_eq!(layout.get("any"), None);
-    }
-
-    #[test]
-    fn remove_drops_entry() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-
-        let id = "01JZ9P6S0R8ZX0G8N3Z4V7Y8QC";
-        let mut layout = Layout::default();
-        layout.set(id, sample_geometry(3), false);
-
-        save(&paths, &layout).unwrap();
-
-        let mut loaded = load(&paths);
-        assert!(loaded.get(id).is_some(), "entry should exist before remove");
-        loaded.remove(id);
-        assert_eq!(loaded.get(id), None, "get after remove must return None");
-    }
-
-    #[test]
-    fn save_leaves_no_temp_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-
-        let mut layout = Layout::default();
-        layout.set("01JZ9P6S0R8ZX0G8N3Z4V7Y8QD", sample_geometry(4), false);
-
-        save(&paths, &layout).unwrap();
-
-        let layout_dir = paths.layout_file().parent().unwrap().to_path_buf();
-        let entries: Vec<_> = std::fs::read_dir(&layout_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .collect();
-
-        assert_eq!(entries.len(), 1, "exactly one file should exist after save");
-        let name = entries[0].file_name();
-        let name_str = name.to_string_lossy();
-        assert_eq!(name_str.as_ref(), "layout.toml", "file must be layout.toml");
-        assert!(!name_str.contains(".tmp"), "no temp files should remain");
-    }
-
-    #[test]
-    fn a_layout_file_written_before_roll_up_existed_loads_as_not_collapsed() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-
-        // Exactly the shape older Waynote versions wrote: a geometry table and
-        // no `collapsed` key anywhere.
-        let path = paths.layout_file();
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(
-            &path,
-            b"[notes.01JZ9P6S0R8ZX0G8N3Z4V7Y8QK.geometry]\n\
-              output = \"DP-1\"\n\
-              output_desc = \"Dell U2720Q\"\n\
-              logical = [0, 0, 2560, 1440]\n\
-              x = 100\n y = 200\n w = 280\n h = 220\n",
-        )
-        .unwrap();
-
-        let loaded = load(&paths);
-        assert!(
-            loaded.get("01JZ9P6S0R8ZX0G8N3Z4V7Y8QK").is_some(),
-            "the old file must still load"
-        );
-        assert!(!loaded.collapsed("01JZ9P6S0R8ZX0G8N3Z4V7Y8QK"));
-    }
-
-    #[test]
-    fn a_collapsed_note_is_still_collapsed_after_save_and_load() {
-        let dir = tempfile::tempdir().unwrap();
-        let paths = make_paths(dir.path().to_str().unwrap());
-        let id = "01JZ9P6S0R8ZX0G8N3Z4V7Y8QE";
-
-        let mut layout = Layout::default();
-        layout.set(id, sample_geometry(5), true);
-        save(&paths, &layout).unwrap();
-
-        assert!(load(&paths).collapsed(id));
-    }
-
-    #[test]
-    fn moving_a_collapsed_note_keeps_it_collapsed() {
-        let id = "01JZ9P6S0R8ZX0G8N3Z4V7Y8QF";
-        let mut layout = Layout::default();
-        layout.set(id, sample_geometry(6), true);
-
-        // What a drag commit does: write the new geometry, carrying the flag.
-        layout.set(id, sample_geometry(7), layout.collapsed(id));
-
-        assert!(layout.collapsed(id), "a move must not unroll the note");
-        assert_eq!(layout.get(id), Some(&sample_geometry(7)));
-    }
-
-    #[test]
-    fn a_note_with_no_layout_entry_is_not_collapsed() {
-        assert!(!Layout::default().collapsed("never-seen"));
+    fn board_state_roundtrips() {
+        let state = BoardState { width: 1100, height: 700, scroll: 180.0, active: Some("id".into()) };
+        let loaded: BoardState = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
+        assert_eq!(loaded.active, state.active);
+        assert_eq!(loaded.scroll, 180.0);
+        assert_eq!((loaded.width, loaded.height), (1100, 700));
     }
 }
