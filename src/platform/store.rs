@@ -65,11 +65,6 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
         .collect();
 
     // Build RawId slice — borrow from local strings to satisfy lifetimes.
-    let path_keys: Vec<String> = files
-        .iter()
-        .map(|(p, _, _)| p.to_str().unwrap_or("").to_string())
-        .collect();
-    let fm_ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
     let filename_ids: Vec<Option<String>> = files
         .iter()
         .map(|(p, _, _)| {
@@ -82,8 +77,7 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
 
     let raw_ids: Vec<RawId> = (0..files.len())
         .map(|i| RawId {
-            path_key: &path_keys[i],
-            fm_id: &fm_ids[i],
+            fm_id: &notes[i].id,
             filename_id: filename_ids[i].as_deref(),
         })
         .collect();

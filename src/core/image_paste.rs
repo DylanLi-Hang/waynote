@@ -1,6 +1,6 @@
 //! PURE image-paste decisions: caps/downsample policy + attachment path/snippet.
 //! No GTK, no clipboard, no I/O. The GTK clipboard read + PNG encode glue lives
-//! in `platform::clipboard_image` (Plan 6 Task 2).
+//! in `platform::clipboard_image`.
 
 /// Caps from config: max output pixel count (w*h), max output bytes,
 /// and whether oversized images may be downsampled (vs rejected).

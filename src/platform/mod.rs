@@ -1,16 +1,7 @@
-pub mod geometry;
-pub mod monitors;
-pub mod surfaces;
-pub mod input_region;
-pub mod repaint;
 pub mod paths;
 pub mod store;
 pub mod layout;
 pub mod config;
-pub mod runtime_prefs;
 pub mod watcher;
 pub mod render;
 pub mod clipboard_image;
-pub mod doctor;
-pub mod autostart;
-pub mod user_assets;

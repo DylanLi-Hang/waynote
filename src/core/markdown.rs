@@ -1,8 +1,6 @@
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 
-// IR types — consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text(String),
@@ -16,7 +14,6 @@ pub enum Inline {
     HardBreak,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Heading { level: u8, inlines: Vec<Inline> },
@@ -40,7 +37,6 @@ pub struct Table {
     pub rows: Vec<Vec<Vec<Inline>>>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct List {
     pub ordered: bool,
@@ -48,20 +44,18 @@ pub struct List {
     pub items: Vec<ListItem>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListItem {
     pub task: Option<bool>,
     pub blocks: Vec<Block>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderDoc {
     pub blocks: Vec<Block>,
 }
 
-// ── Heading style (Task 2) ────────────────────────────────────────────────────
+// ── Heading style ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HeadingStyle {
@@ -88,17 +82,13 @@ const HEADING_STYLES: [HeadingStyle; 6] = [
 ];
 
 /// Per-level style; level is clamped to 1..=6.
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn heading_style(level: u8) -> HeadingStyle {
     let idx = level.clamp(1, 6) as usize - 1;
     HEADING_STYLES[idx]
 }
 
-// ── parse (Task 1) ────────────────────────────────────────────────────────────
+// ── parse ────────────────────────────────────────────────────────────
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn parse(md: &str) -> RenderDoc {
     let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     let events: Vec<_> = Parser::new_ext(md, opts).into_offset_iter().collect();
@@ -111,7 +101,6 @@ pub fn parse(md: &str) -> RenderDoc {
 
 // Events borrow from the input `md`; `parse()` folds them into owned-String IR
 // before returning, so the borrowed lifetime `'a` is sound (no transmute needed).
-#[allow(dead_code)]
 struct ParseCtx<'a> {
     events: Vec<(Event<'a>, std::ops::Range<usize>)>,
     pos: usize,
@@ -434,7 +423,6 @@ impl<'a> ParseCtx<'a> {
     }
 }
 
-#[allow(dead_code)]
 fn collect_text_until_end(
     events: &[(Event<'_>, std::ops::Range<usize>)],
     start: usize,
@@ -454,7 +442,6 @@ fn collect_text_until_end(
     text
 }
 
-#[allow(dead_code)]
 fn skip_until_end(
     pos: &mut usize,
     events: &[(Event<'_>, std::ops::Range<usize>)],
@@ -474,17 +461,13 @@ fn skip_until_end(
     }
 }
 
-// ── Task 3: toggle_task / task_count ─────────────────────────────────────────
+// ── toggle_task / task_count ─────────────────────────────────────────
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn task_count(raw: &str) -> usize {
     collect_task_ranges(raw).len()
 }
 
 /// Flip the (0-based) Nth GFM task checkbox in `raw`.
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn toggle_task(raw: &str, index: usize) -> String {
     let ranges = collect_task_ranges(raw);
     let Some(range) = ranges.get(index) else {
@@ -527,9 +510,8 @@ fn flip_checkbox(raw: &str, pos: usize) -> String {
     String::from_utf8(bytes).expect("ASCII checkbox-byte replacement preserves UTF-8")
 }
 
-// ── Task 4: link/image classification ────────────────────────────────────────
+// ── link/image classification ────────────────────────────────────────
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImageSrc {
     LocalRelative(String),
@@ -538,8 +520,6 @@ pub enum ImageSrc {
     Unsupported,
 }
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn classify_image(dest: &str) -> ImageSrc {
     if dest.starts_with("https://") || dest.starts_with("http://") {
         return ImageSrc::Remote;
@@ -553,13 +533,11 @@ pub fn classify_image(dest: &str) -> ImageSrc {
     ImageSrc::LocalRelative(dest.to_string())
 }
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn is_web_link(href: &str) -> bool {
     href.starts_with("https://") || href.starts_with("http://") || href.starts_with("mailto:")
 }
 
-// ── Tests (Task 1) ────────────────────────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -925,7 +903,7 @@ mod tests {
         assert!(!leaks, "raw HTML must not leak into IR: {:?}", doc.blocks);
     }
 
-    // ── Task 2: heading style table ───────────────────────────────────────────
+    // ── heading style table ───────────────────────────────────────────
 
     #[test]
     fn heading_scales_strictly_decreasing() {
@@ -989,7 +967,7 @@ mod tests {
         assert_eq!(heading_style(9), heading_style(6));
     }
 
-    // ── Task 3: toggle_task / task_count ──────────────────────────────────────
+    // ── toggle_task / task_count ──────────────────────────────────────
 
     #[test]
     fn toggle_task_0_unchecked_to_checked() {
@@ -1061,7 +1039,7 @@ mod tests {
         assert_eq!(task_count("- [ ] a\n- [x] b\n"), 2);
     }
 
-    // ── Task 4: link/image classification ────────────────────────────────────
+    // ── link/image classification ────────────────────────────────────
 
     #[test]
     fn classify_image_local_relative() {

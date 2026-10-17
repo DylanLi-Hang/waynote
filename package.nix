@@ -4,7 +4,6 @@
   pkg-config,
   wrapGAppsHook4,
   gtk4,
-  gtk4-layer-shell,
 }:
 
 rustPlatform.buildRustPackage {
@@ -20,7 +19,6 @@ rustPlatform.buildRustPackage {
 
   buildInputs = [
     gtk4
-    gtk4-layer-shell
   ];
 
   postInstall = ''

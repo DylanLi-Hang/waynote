@@ -1,46 +1,39 @@
 # Developing on NixOS
 
-Build and run the checkout without installing it or switching the system:
+Build and run without installing or switching the system:
 
 ```sh
 ./scripts/dev run
 ```
 
-The script enters the flake's development shell, performs an incremental debug
-build, and starts the app in the foreground. Run it again to rebuild and replace
-the previous development session. Ctrl+C or `./scripts/dev stop` stops it.
+The runner enters the pinned Nix development shell, builds incrementally, and
+starts the app in the foreground. Run it again to rebuild and replace the prior
+development session. Ctrl+C or `./scripts/dev stop` stops it.
 
-The development app uses the separate D-Bus ID `dev.mryll.waynote.development`
-and layer-shell namespace `waynote-dev`. Its notes, layout, configuration, and
-logs live under `target/dev/`, separate from the installed app. The first run
-creates a blue `[DEV] Waynote` sample note with task checkboxes. Subsequent runs
-preserve edited test notes and config. `target/` is ignored by Git.
+The app uses D-Bus/application ID `dev.mryll.waynote.development`. Notes, window
+state, configuration and logs live under `target/dev/`, separate from the
+installed app. The first run creates a blue `[DEV] Waynote` sample; subsequent
+runs preserve development data. Editing autosaves, and hiding flushes drafts.
+A save error keeps the draft visible so it can be copied or retried.
 
-The current application still requires explicit edit commits: use Esc or its
-Save control before restarting the development process. The agreed autosave,
-focus-driven Edit/Preview, and single-window board are future work.
-
-## Trying Meta+N on Hyprland
+## Meta+N on Hyprland
 
 ```sh
 ./scripts/dev run --bind
 ```
 
-While this process is alive, Meta+N drives the development app. The existing
-binding is restored when the app exits or the runner receives Ctrl+C/SIGTERM.
-This changes only the running compositor, not NixOS or Home Manager files.
+While the runner lives, Meta+N drives the development app. The original binding
+is restored on normal exit or Ctrl+C/SIGTERM. Only the running compositor is
+changed; no NixOS or Home Manager activation is performed.
 
-The binding helper targets Hyprland's Lua configuration API. For a Lua binding,
-it reads the original single-line `hl.bind("SUPER + N", hl.dsp.exec_cmd(...), ...)`
-from `$XDG_CONFIG_HOME/hypr/hyprland.lua` (normally `~/.config/hypr/hyprland.lua`).
-It refuses ambiguous bindings instead of guessing how to restore them. Run
-without `--bind` on other desktops or unsupported configurations.
+The binding helper uses Hyprland's Lua API. It recovers the original single-line
+`hl.bind("SUPER + N", hl.dsp.exec_cmd(...), ...)` from
+`$XDG_CONFIG_HOME/hypr/hyprland.lua` and refuses ambiguous bindings. Run without
+`--bind` on unsupported desktops or configurations.
 
-If the runner is killed with SIGKILL, use `./scripts/dev stop` in the same
-Hyprland session to recover the saved binding. A compositor config reload or a
-new binding installed by the user takes precedence over automatic restoration.
-
-You can also control only the running development instance explicitly:
+After SIGKILL, run `./scripts/dev stop` in the same Hyprland session to recover
+the saved binding. A compositor reload or a user-installed binding takes
+precedence over restoration.
 
 ```sh
 ./scripts/dev toggle
@@ -49,25 +42,23 @@ You can also control only the running development instance explicitly:
 ./scripts/dev stop
 ```
 
-The installed app can continue running. Development commands use the separate
-application ID; the normal installed `waynote` command still targets the
-installed instance.
+These commands address only the development instance. The installed `waynote`
+command continues to address the installed instance.
 
-## Verification
+## Checks
 
 ```sh
-./scripts/dev check       # runner regressions, Nix derivation evaluation, Rust tests, Clippy
-./scripts/dev gui         # existing GTK/Wayland GUI regressions with temporary test data
-./scripts/dev package     # build the wrapped Nix package without installing or activating
+./scripts/dev check       # Python runner tests, Nix evaluation, Rust tests, Clippy
+./scripts/dev gui         # isolated GTK behavior regressions in the Wayland session
+./scripts/dev package     # wrapped Nix package build, no installation or activation
 ```
 
-The first build downloads the pinned Nix dependencies and Cargo crates. Later
-debug builds are incremental. The GUI suite requires an active Wayland session
-with layer-shell support and briefly creates test surfaces. It currently checks
-color changes while editing, external-file conflicts, and Wayland input-region
-remapping. It does not yet test the planned board or focus-driven editing.
+The first build fetches pinned dependencies and compiles Cargo crates. Later
+builds reuse the checkout's `target/` artifacts. GUI tests require an active
+Wayland session and briefly open a test window. Tests cover state/persistence
+logic and GTK behavior; use the real compositor to evaluate focus, shortcuts,
+stacking and resizing. Hyprland results do not establish KDE compatibility.
 
-Use the real compositor to verify keyboard focus, Meta+N, stacking, and pointer
-pass-through. A Hyprland result does not establish KDE compatibility. Application
-output is appended to `target/dev/app.log`; saved test notes are under
-`target/dev/data/waynote/notes/`.
+Logs are appended to `target/dev/app.log`; saved development notes are under
+`target/dev/data/waynote/notes/`. The board uses a regular GTK window, so its
+floating and stacking policy belongs to the compositor; see the README.

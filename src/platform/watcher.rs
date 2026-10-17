@@ -1,6 +1,5 @@
 // platform::watcher is not yet wired into the binary entry point. Suppress
 // dead-code warnings until main.rs integrates it. Remove once wired up.
-#![allow(dead_code)]
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
