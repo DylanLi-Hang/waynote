@@ -34,41 +34,66 @@ pub fn install_card_css() {
 }
 
 const CARD_CSS: &str = "
+.waynote-board { background: #eeeae2; }
+.waynote-toolbar {
+    background: #eeeae2;
+    background-image: none;
+    border-bottom: 1px solid rgba(64,58,40,0.10);
+    box-shadow: none;
+    color: #6e6447;
+    min-height: 42px;
+}
+.waynote-toolbar button {
+    color: #6e6447;
+    background: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+.waynote-toolbar button:hover, .waynote-toolbar button:checked {
+    background: rgba(64,58,40,0.08);
+}
+.waynote-board flowboxchild { padding: 0; background: transparent; }
 .waynote-table-cell { padding: 5px 6px; border-bottom: 1px solid rgba(0,0,0,0.14); }
 .waynote-card {
     border-radius: 10px;
     padding: 14px 16px;
-    box-shadow: 0 3px 12px rgba(0,0,0,0.35);
+    font-size: 15px;
+    box-shadow: 0 3px 12px rgba(0,0,0,0.18);
 }
-.waynote-card.yellow {
+.waynote-card.yellow, .waynote-swatch.yellow {
     background: #F6EBA8;
     border: 1px solid #E3D58C;
 }
-.waynote-card.green {
+.waynote-card.green, .waynote-swatch.green {
     background: #CDE8C5;
     border: 1px solid #B8D9AE;
 }
-.waynote-card.blue {
+.waynote-card.blue, .waynote-swatch.blue {
     background: #C7DDF1;
     border: 1px solid #AECBE6;
 }
-.waynote-card.pink {
+.waynote-card.pink, .waynote-swatch.pink {
     background: #F4D2DA;
     border: 1px solid #E6BAC5;
 }
-.waynote-card.purple {
+.waynote-card.purple, .waynote-swatch.purple {
     background: #E0D4F0;
     border: 1px solid #CBBCE6;
 }
-.waynote-card.gray {
+.waynote-card.gray, .waynote-swatch.gray {
     background: #DEDCD6;
     border: 1px solid #C9C7C0;
 }
-.waynote-card.orange {
+.waynote-card.orange, .waynote-swatch.orange {
     background: #F6D9B8;
     border: 1px solid #E8C49A;
 }
-.waynote-card.waynote-active { border-color: #3A86FF; }
+.waynote-card:hover { border-color: rgba(0,0,0,0.25); }
+.waynote-card.waynote-active {
+    border-color: rgba(64,58,40,0.40);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.24);
+}
 /* Markdown task checkboxes (GTK4 tree: checkbutton > check). Replace Adwaita's
    heavy dark indicator with a light outline box in the paper's ink — muted when
    empty, the paper accent when checked — so done/undone read clearly on pastel. */
@@ -123,8 +148,40 @@ const CARD_CSS: &str = "
     background: transparent;
     color: transparent;
 }
-.waynote-header { border-bottom: 1px solid rgba(0,0,0,0.10); }
-.waynote-header-title { color: #403A28; font-weight: bold; }
+.waynote-header {
+    min-height: 30px;
+    padding: 1px 0 2px;
+    border-bottom: 1px solid rgba(0,0,0,0.10);
+}
+.waynote-header-title { color: #6e6447; font-size: 0.8em; font-weight: 600; }
+.waynote-control > button {
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0 3px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    color: #6e6447;
+    -gtk-icon-size: 16px;
+}
+.waynote-control > button image { opacity: 0.55; }
+.waynote-control > button:hover, .waynote-control > button:checked {
+    background: rgba(64,58,40,0.08);
+}
+.waynote-control > button:hover image, .waynote-control > button:checked image { opacity: 1; }
+.waynote-color-palette { padding: 8px; }
+.waynote-swatch {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0;
+    border-radius: 50%;
+    background-image: none;
+    box-shadow: none;
+}
+.waynote-swatch:hover { box-shadow: 0 0 0 2px rgba(64,58,40,0.25); }
+.waynote-save-error { font-size: 0.8em; color: #8f351c; }
 /* Edit-mode raw-markdown view: needs an explicit readable colour because the
    `.waynote-card text { color: transparent }` rule above would otherwise hide it.
    Two-class specificity beats that rule. Monospace + a visible caret. */
@@ -133,6 +190,7 @@ const CARD_CSS: &str = "
     color: #2e2a22;
     caret-color: #2e2a22;
     font-family: monospace;
+    font-size: 14px;
 }
 ";
 

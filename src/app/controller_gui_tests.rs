@@ -74,6 +74,7 @@ fn board_gui_regressions() {
     assert_eq!(this.borrow().cards.len(), 1);
     let first = this.borrow().cards.keys().next().unwrap().clone();
     assert!(this.borrow().cards[&first].editing());
+    assert!(!this.borrow().cards[&first].status.is_visible());
     let editor = this.borrow().cards[&first].editor.clone();
     editor.buffer().set_text("# Draft\n\n- [ ] Task\n");
     // Hide must flush the buffer even before its deferred changed event runs.
@@ -296,6 +297,10 @@ fn board_gui_regressions() {
             "Save conflict must not discard a hidden draft"
         );
         assert!(board.cards[&first].blocked);
+        assert!(
+            board.cards[&first].status.is_visible(),
+            "Save errors stay visible"
+        );
         assert_eq!(
             std::fs::read_to_string(&board.cards[&first].path).unwrap(),
             "External content"

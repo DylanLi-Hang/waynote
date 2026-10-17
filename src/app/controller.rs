@@ -77,7 +77,7 @@ fn button(
     weak: &Weak<RefCell<Controller>>,
     id: &str,
     action: impl Fn(&Rc<RefCell<Controller>>, &str) + 'static,
-) {
+) -> gtk::Button {
     let b = gtk::Button::with_label(label);
     let weak = weak.clone();
     let id = id.to_string();
@@ -91,12 +91,13 @@ fn button(
         }
     });
     parent.append(&b);
+    b
 }
 fn scroller(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Automatic)
         .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .min_content_height(220)
+        .min_content_height(140)
         .max_content_height(460)
         .propagate_natural_height(true)
         .child(child)
@@ -136,7 +137,7 @@ impl Controller {
         message.set_wrap(true);
         message.set_visible(false);
         let new = gtk::Button::with_label("+ New note");
-        let notes = gtk::MenuButton::builder().label("Notes ▾").build();
+        let notes = gtk::MenuButton::builder().label("Notes").build();
         let search = gtk::SearchEntry::builder()
             .placeholder_text("Search notes")
             .build();
@@ -159,6 +160,10 @@ impl Controller {
         let selector_popover = gtk::Popover::builder().child(&choices).build();
         notes.set_popover(Some(&selector_popover));
         let toolbar = gtk::HeaderBar::new();
+        toolbar.add_css_class("waynote-toolbar");
+        toolbar.set_decoration_layout(Some(":close"));
+        notes.add_css_class("flat");
+        new.add_css_class("flat");
         toolbar.pack_start(&notes);
         toolbar.pack_end(&new);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -176,6 +181,7 @@ impl Controller {
             .default_height(state.height.max(300))
             .child(&content)
             .build();
+        window.add_css_class("waynote-board");
         window.set_titlebar(Some(&toolbar));
         let active = state.active.clone();
         let this = Rc::new(RefCell::new(Self {
@@ -322,6 +328,7 @@ impl Controller {
             if card.raw() != card.saved_body || card.dirty {
                 let card = self.cards.get_mut(&id).unwrap();
                 card.blocked = true;
+                card.status.set_visible(true);
                 card.resolve.set_visible(true);
                 card.status
                     .set_text("File removed externally. Keep draft as a new note or reload.");
@@ -338,6 +345,7 @@ impl Controller {
                 }
                 if card.raw() != card.saved_body || card.dirty {
                     card.blocked = true;
+                    card.status.set_visible(true);
                     card.resolve.set_visible(true);
                     card.status
                         .set_text("Changed externally. Keep draft as a new note or reload.");
@@ -384,15 +392,17 @@ impl Controller {
         title.set_xalign(0.0);
         title.add_css_class("waynote-header-title");
         let lock = gtk::Label::new(if loaded.note.locked {
-            Some("🔒")
+            Some("Locked")
         } else {
             None
         });
+        lock.add_css_class("waynote-header-title");
         lock.set_tooltip_text(Some("Content is read-only"));
         let menu_button = gtk::MenuButton::builder()
-            .label("⋯")
+            .icon_name("view-more-symbolic")
             .tooltip_text("Note actions")
             .build();
+        menu_button.add_css_class("waynote-control");
         let actions = gtk::Box::new(gtk::Orientation::Vertical, 5);
         let menu = gtk::Popover::builder().child(&actions).build();
         menu_button.set_popover(Some(&menu));
@@ -405,10 +415,11 @@ impl Controller {
             card.menu.popdown();
         });
         let color_menu = gtk::MenuButton::builder().label("Color").build();
-        let colors = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        let colors = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        colors.add_css_class("waynote-color-palette");
         let color_popover = gtk::Popover::builder().child(&colors).build();
         for color in theme::NOTE_COLORS {
-            button(color, &colors, &self.weak, &id, move |this, id| {
+            let swatch = button("", &colors, &self.weak, &id, move |this, id| {
                 let mut board = this.borrow_mut();
                 if let Some(card) = board.cards.get_mut(id) {
                     card.root.remove_css_class(&card.note.color);
@@ -420,6 +431,9 @@ impl Controller {
                 board.save_card(id);
                 board.render_card(id);
             });
+            swatch.set_tooltip_text(Some(color));
+            swatch.add_css_class("waynote-swatch");
+            swatch.add_css_class(color);
         }
         color_menu.set_popover(Some(&color_popover));
         actions.append(&color_menu);
@@ -469,7 +483,7 @@ impl Controller {
         stack.set_vhomogeneous(false);
         stack.set_hhomogeneous(false);
         let preview = gtk::ScrolledWindow::new();
-        preview.set_min_content_height(220);
+        preview.set_min_content_height(140);
         preview.set_max_content_height(460);
         preview.set_propagate_natural_height(true);
         preview.set_hscrollbar_policy(gtk::PolicyType::Automatic);
@@ -477,7 +491,9 @@ impl Controller {
         stack.add_named(&scroller(&editor), Some("edit"));
         stack.set_visible_child_name("preview");
         root.append(&stack);
-        let status = gtk::Label::new(Some("Saved"));
+        let status = gtk::Label::new(None);
+        status.add_css_class("waynote-save-error");
+        status.set_visible(false);
         status.set_xalign(0.0);
         status.set_wrap(true);
         root.append(&status);
@@ -760,11 +776,6 @@ impl Controller {
             return;
         }
         card.dirty = true;
-        card.status.set_text(if card.blocked {
-            "External change needs resolution"
-        } else {
-            "Saving…"
-        });
         if let Some(timer) = card.autosave.take() {
             timer.remove();
         }
@@ -809,12 +820,13 @@ impl Controller {
                 card.saved_body = card.note.body.clone();
                 card.dirty = false;
                 card.title.set_text(&card.note.title());
-                card.status.set_text("Saved");
+                card.status.set_visible(false);
                 self.sync_known();
                 true
             }
             Ok(store::SaveOutcome::Conflict(path)) => {
                 card.blocked = true;
+                card.status.set_visible(true);
                 card.resolve.set_visible(true);
                 card.status.set_text(&format!(
                     "External change: draft copy saved at {}",
@@ -823,6 +835,7 @@ impl Controller {
                 false
             }
             Err(e) => {
+                card.status.set_visible(true);
                 card.status
                     .set_text(&format!("Save failed: {e}. Draft kept here."));
                 false
