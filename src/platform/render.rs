@@ -20,7 +20,7 @@ use gtk::{
 };
 
 use crate::core::markdown::{
-    self, Block, Inline, List, ListItem, RenderDoc,
+    self, Block, Inline, List, ListItem, RenderDoc, Table,
     classify_image, heading_style, is_web_link, ImageSrc,
 };
 use crate::core::note::Layer;
@@ -42,6 +42,7 @@ pub fn install_card_css() {
 }
 
 const CARD_CSS: &str = "
+.waynote-table-cell { padding: 5px 6px; border-bottom: 1px solid rgba(0,0,0,0.14); }
 .waynote-card {
     border-radius: 10px;
     padding: 14px 16px;
@@ -615,6 +616,7 @@ struct RenderCtx<'a> {
     on_toggle: Rc<dyn Fn(usize)>,
     base_dir: PathBuf,
     content_width: i32,
+    color: String,
     link_map: HashMap<String, String>,
 }
 
@@ -678,6 +680,7 @@ pub fn render_view(
         on_toggle,
         base_dir: opts.base_dir.clone(),
         content_width: opts.content_width,
+        color: opts.color.clone(),
         link_map: HashMap::new(),
     };
 
@@ -731,10 +734,52 @@ fn render_block(ctx: &mut RenderCtx, block: &Block, depth: usize, iter: &mut gtk
         Block::Code { lang, text } => render_code_block(ctx, lang.as_deref(), text, iter),
         Block::Quote(inner) => render_blockquote(ctx, inner, depth, iter),
         Block::List(list) => render_list(ctx, list, depth, iter),
+        Block::Table(table) => render_table(ctx, table, iter),
         Block::ThematicBreak => render_hr(ctx, iter),
         // A preserved blank line: just an empty line, no paragraph spacing tag.
         Block::BlankLine => ctx.newline(iter),
     }
+}
+
+fn render_table(ctx: &mut RenderCtx, table: &Table, iter: &mut gtk::TextIter) {
+    let columns = table.alignments.len().max(1) as i32;
+    let width = ctx.content_width.max(1);
+    let cell_width = (width / columns - 12).max(80);
+    let grid = gtk::Grid::builder().column_homogeneous(true).build();
+    for (row, cells) in std::iter::once(&table.header).chain(&table.rows).enumerate() {
+        for (col, inlines) in cells.iter().enumerate() {
+            let opts = RenderOpts {
+                base_dir: ctx.base_dir.clone(),
+                color: ctx.color.clone(),
+                content_width: cell_width,
+            };
+            let cell = render_view(&RenderDoc { blocks: vec![Block::Paragraph(inlines.clone())] }, &opts, ctx.on_toggle.clone());
+            cell.set_wrap_mode(WrapMode::WordChar);
+            cell.set_width_request(cell_width);
+            cell.set_hexpand(true);
+            cell.add_css_class("waynote-table-cell");
+            let buffer = cell.buffer();
+            let alignment = gtk::TextTag::new(None);
+            alignment.set_justification(match table.alignments.get(col) {
+                Some(pulldown_cmark::Alignment::Center) => gtk::Justification::Center,
+                Some(pulldown_cmark::Alignment::Right) => gtk::Justification::Right,
+                _ => gtk::Justification::Left,
+            });
+            if row == 0 { alignment.set_weight(700); }
+            buffer.tag_table().add(&alignment);
+            buffer.apply_tag(&alignment, &buffer.start_iter(), &buffer.end_iter());
+            grid.attach(&cell, col as i32, row as i32, 1, 1);
+        }
+    }
+    let scroll = ScrolledWindow::builder()
+        .hscrollbar_policy(PolicyType::Automatic)
+        .vscrollbar_policy(PolicyType::Never)
+        .width_request(width)
+        .child(&grid)
+        .build();
+    let anchor = ctx.buffer.create_child_anchor(iter);
+    ctx.view.add_child_at_anchor(&scroll, &anchor);
+    ctx.newline(iter);
 }
 
 // ── Heading ───────────────────────────────────────────────────────────────────

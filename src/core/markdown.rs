@@ -1,4 +1,4 @@
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 
 // IR types — consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
 
@@ -24,12 +24,20 @@ pub enum Block {
     Code { lang: Option<String>, text: String },
     Quote(Vec<Block>),
     List(List),
+    Table(Table),
     ThematicBreak,
     /// A user-typed blank line preserved verbatim. CommonMark collapses runs of
     /// blank lines between blocks, but a sticky note is WYSIWYG, so each blank
     /// line beyond the normal paragraph separator becomes one of these (root
     /// level only — see `parse_blocks`).
     BlankLine,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    pub alignments: Vec<Alignment>,
+    pub header: Vec<Vec<Inline>>,
+    pub rows: Vec<Vec<Vec<Inline>>>,
 }
 
 #[allow(dead_code)]
@@ -92,7 +100,7 @@ pub fn heading_style(level: u8) -> HeadingStyle {
 // consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
 #[allow(dead_code)]
 pub fn parse(md: &str) -> RenderDoc {
-    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     let events: Vec<_> = Parser::new_ext(md, opts).into_offset_iter().collect();
     let mut parser = ParseCtx { events, pos: 0, src: md };
     let blocks = parser.parse_blocks(true);
@@ -210,6 +218,10 @@ impl<'a> ParseCtx<'a> {
                 self.next();
                 Some(Block::List(List { ordered, start, items }))
             }
+            Event::Start(Tag::Table(alignments)) => {
+                let alignments = alignments.clone();
+                Some(Block::Table(self.parse_table(alignments)))
+            }
             Event::Rule => {
                 self.next();
                 Some(Block::ThematicBreak)
@@ -289,6 +301,33 @@ impl<'a> ParseCtx<'a> {
             }
         }
         Some(Block::Code { lang, text })
+    }
+
+    fn parse_table(&mut self, alignments: Vec<Alignment>) -> Table {
+        self.next();
+        let mut table = Table { alignments, header: Vec::new(), rows: Vec::new() };
+        loop {
+            match self.peek() {
+                Some(Event::Start(Tag::TableHead | Tag::TableRow)) => {
+                    let is_header = matches!(self.peek(), Some(Event::Start(Tag::TableHead)));
+                    self.next();
+                    let mut cells = Vec::new();
+                    while matches!(self.peek(), Some(Event::Start(Tag::TableCell))) {
+                        self.next();
+                        cells.push(self.parse_inlines());
+                        self.next();
+                    }
+                    self.next();
+                    if is_header { table.header = cells; } else { table.rows.push(cells); }
+                }
+                Some(Event::End(TagEnd::Table)) | None => {
+                    self.next();
+                    break;
+                }
+                _ => { self.next(); }
+            }
+        }
+        table
     }
 
     fn parse_list_items(&mut self) -> Vec<ListItem> {
@@ -458,7 +497,7 @@ pub fn toggle_task(raw: &str, index: usize) -> String {
 }
 
 fn collect_task_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
-    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     Parser::new_ext(raw, opts)
         .into_offset_iter()
         .filter_map(|(e, r)| matches!(e, Event::TaskListMarker(_)).then_some(r))
@@ -806,6 +845,40 @@ mod tests {
     }
 
     #[test]
+    fn pipe_table_preserves_alignment_and_inline_formatting() {
+        let raw = "| Name | Detail | Count | Other |\n| :--- | :---: | ---: | --- |\n| **中文** | *text* and `code` | [link](https://example.com) | ~~old~~ |\n";
+        let doc = parse(raw);
+        let [Block::Table(table)] = doc.blocks.as_slice() else { panic!("expected table") };
+        assert_eq!(table.alignments, vec![Alignment::Left, Alignment::Center, Alignment::Right, Alignment::None]);
+        assert_eq!(table.header[0], vec![Inline::Text("Name".into())]);
+        assert_eq!(table.rows[0][0], vec![Inline::Strong(vec![Inline::Text("中文".into())])]);
+        assert_eq!(table.rows[0][1], vec![Inline::Emphasis(vec![Inline::Text("text".into())]), Inline::Text(" and ".into()), Inline::Code("code".into())]);
+        assert_eq!(table.rows[0][2], vec![Inline::Link { href: "https://example.com".into(), children: vec![Inline::Text("link".into())] }]);
+        assert_eq!(table.rows[0][3], vec![Inline::Strikethrough(vec![Inline::Text("old".into())])]);
+    }
+
+    #[test]
+    fn pipe_table_keeps_empty_cells_and_escaped_pipes() {
+        let doc = parse("| A | B | C |\n| --- | --- | --- |\n| left\\|right | | `a\\|b` |\n| short |\n");
+        let [Block::Table(table)] = doc.blocks.as_slice() else { panic!("expected table") };
+        assert_eq!(table.rows[0][0].iter().filter_map(|i| match i { Inline::Text(t) => Some(t.as_str()), _ => None }).collect::<String>(), "left|right");
+        assert!(table.rows[0][1].is_empty());
+        assert_eq!(table.rows[0][2], vec![Inline::Code("a|b".into())]);
+        assert_eq!(table.rows[1].len(), 3);
+        assert!(table.rows[1][1].is_empty());
+        assert!(table.rows[1][2].is_empty());
+    }
+
+    #[test]
+    fn table_does_not_consume_following_blocks_or_change_task_offsets() {
+        let raw = "| A | B |\n| --- | --- |\n| x | y |\n\n- [ ] 中文任务\n";
+        let doc = parse(raw);
+        assert!(matches!(&doc.blocks[0], Block::Table(_)));
+        assert!(matches!(&doc.blocks[1], Block::List(_)));
+        assert_eq!(toggle_task(raw, 0), raw.replace("[ ]", "[x]"));
+    }
+
+    #[test]
     fn thematic_break() {
         let doc = parse("text\n\n---\n");
         assert!(doc.blocks.contains(&Block::ThematicBreak));
@@ -835,6 +908,10 @@ mod tests {
                 .iter()
                 .flat_map(|it| &it.blocks)
                 .any(block_has_angle_bracket),
+            Block::Table(table) => table.header.iter()
+                .chain(table.rows.iter().flatten())
+                .flatten()
+                .any(inline_has_angle_bracket),
             Block::ThematicBreak | Block::BlankLine => false,
         }
     }
