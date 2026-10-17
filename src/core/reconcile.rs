@@ -22,15 +22,10 @@ pub enum Change {
     Renamed { id: String, new_path: String },
 }
 
-/// Reconcile a rescan against known state.
-///
-/// `own_writes`: set of content hashes the app just wrote; a Scanned file
-/// whose hash is in this set is consumed (NOT reported) — the own-write
-/// loop guard.
+/// Reconcile a rescan against the latest loaded or saved state.
 pub fn reconcile(
     known: &[Known],
     scanned: &[Scanned],
-    own_writes: &HashSet<String>,
 ) -> Vec<Change> {
     let known_by_id: HashMap<&str, &Known> =
         known.iter().map(|k| (k.id.as_str(), k)).collect();
@@ -38,9 +33,6 @@ pub fn reconcile(
     let mut changes = Vec::new();
 
     for s in scanned {
-        if own_writes.contains(&s.hash) {
-            continue;
-        }
         match known_by_id.get(s.id.as_str()) {
             None => changes.push(Change::Added(s.id.clone())),
             Some(k) => classify_known(k, s, &mut changes),
@@ -86,14 +78,6 @@ mod tests {
         Scanned { id: id.to_string(), path: path.to_string(), hash: hash.to_string() }
     }
 
-    fn no_own_writes() -> HashSet<String> {
-        HashSet::new()
-    }
-
-    fn own_writes(hashes: &[&str]) -> HashSet<String> {
-        hashes.iter().map(|h| h.to_string()).collect()
-    }
-
     fn sorted(mut changes: Vec<Change>) -> Vec<Change> {
         changes.sort_by_key(|c| match c {
             Change::Added(id) => format!("added:{id}"),
@@ -106,7 +90,7 @@ mod tests {
 
     #[test]
     fn external_new_file_produces_added() {
-        let result = reconcile(&[], &[scanned("id1", "id1-note.md", "hash1")], &no_own_writes());
+        let result = reconcile(&[], &[scanned("id1", "id1-note.md", "hash1")]);
         assert_eq!(result, vec![Change::Added("id1".to_string())]);
     }
 
@@ -115,24 +99,13 @@ mod tests {
         let result = reconcile(
             &[known("id1", "id1-note.md", "hash1")],
             &[scanned("id1", "id1-note.md", "hash2")],
-            &no_own_writes(),
         );
         assert_eq!(result, vec![Change::Modified("id1".to_string())]);
     }
 
     #[test]
-    fn own_write_produces_no_event_even_when_hash_changed() {
-        let result = reconcile(
-            &[known("id1", "id1-note.md", "hash1")],
-            &[scanned("id1", "id1-note.md", "hash2")],
-            &own_writes(&["hash2"]),
-        );
-        assert!(result.is_empty());
-    }
-
-    #[test]
     fn deletion_produces_removed() {
-        let result = reconcile(&[known("id1", "id1-note.md", "hash1")], &[], &no_own_writes());
+        let result = reconcile(&[known("id1", "id1-note.md", "hash1")], &[]);
         assert_eq!(result, vec![Change::Removed("id1".to_string())]);
     }
 
@@ -141,7 +114,6 @@ mod tests {
         let result = reconcile(
             &[known("id1", "id1-old-slug.md", "hash1")],
             &[scanned("id1", "id1-new-slug.md", "hash1")],
-            &no_own_writes(),
         );
         assert_eq!(
             result,
@@ -154,7 +126,6 @@ mod tests {
         let result = reconcile(
             &[known("id1", "id1-note.md", "hash1")],
             &[scanned("id1", "id1-note.md", "hash1")],
-            &no_own_writes(),
         );
         assert!(result.is_empty());
     }
@@ -169,7 +140,7 @@ mod tests {
             scanned("id-new", "id-new.md", "hash-new"),
             scanned("id-existing", "id-existing.md", "hash-changed"),
         ];
-        let result = sorted(reconcile(&known_state, &scan, &no_own_writes()));
+        let result = sorted(reconcile(&known_state, &scan));
         assert_eq!(result, vec![
             Change::Added("id-new".to_string()),
             Change::Modified("id-existing".to_string()),
@@ -177,15 +148,4 @@ mod tests {
         ]);
     }
 
-    #[test]
-    fn own_write_that_is_also_a_rename_is_consumed_not_reported() {
-        // App saved a note and also gave it a new filename. The scan shows
-        // the new path with the app's own hash — it must be silent.
-        let result = reconcile(
-            &[known("id1", "id1-old.md", "hash-app")],
-            &[scanned("id1", "id1-new.md", "hash-app")],
-            &own_writes(&["hash-app"]),
-        );
-        assert!(result.is_empty());
-    }
 }

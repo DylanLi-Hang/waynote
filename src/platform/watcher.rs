@@ -1,7 +1,6 @@
 // platform::watcher is not yet wired into the binary entry point. Suppress
 // dead-code warnings until main.rs integrates it. Remove once wired up.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -19,17 +18,13 @@ use crate::platform::paths::Paths;
 ///
 /// - `known`: the app's current belief about what is on disk (updated by the
 ///   app after each load/save/reconcile cycle).
-/// - `own_writes`: content hashes that the app itself just wrote; the watcher
-///   ignores any Scanned file whose hash appears here (own-write loop guard).
-///   The watcher removes consumed hashes after each reconcile pass.
 pub struct WatchState {
     pub known: Vec<Known>,
-    pub own_writes: HashSet<String>,
 }
 
 impl WatchState {
     pub fn new(known: Vec<Known>) -> Self {
-        WatchState { known, own_writes: HashSet::new() }
+        WatchState { known }
     }
 }
 
@@ -110,9 +105,9 @@ fn extract_id(bytes: &[u8]) -> String {
 ///
 /// On any inotify/FSEvents event, a debounce window of `debounce` is applied.
 /// After the window closes, the watcher rescans the notes dir, reconciles
-/// against `shared_state.known` (filtering out `shared_state.own_writes`),
-/// and invokes `on_change(Vec<Change>)` with any detected changes. The
-/// own_writes set is cleared after each reconcile pass (hashes consumed).
+/// against the latest `shared_state.known`, and invokes `on_change(Vec<Change>)`
+/// with any detected changes. The caller updates known hashes after every save,
+/// so a scan of the application's latest write naturally produces no change.
 ///
 /// **Caller contract**: the watcher reconciles against `shared_state.known` but
 /// never updates it. The caller MUST update `shared_state.known` after processing
@@ -220,7 +215,7 @@ fn drain_debounce_window(
     }
 }
 
-/// Rescan, reconcile, update own_writes, call on_change.
+/// Rescan against the latest known state and dispatch external changes.
 fn reconcile_and_dispatch(
     notes_dir: &Path,
     shared_state: &Arc<Mutex<WatchState>>,
@@ -228,24 +223,12 @@ fn reconcile_and_dispatch(
 ) {
     let scanned = rescan(notes_dir);
 
-    let mut state = match shared_state.lock() {
+    let state = match shared_state.lock() {
         Ok(s) => s,
         Err(_) => return,
     };
 
-    let changes = reconcile::reconcile(&state.known, &scanned, &state.own_writes);
-    // Consume ONLY the own-write hashes this scan actually observed. A recorded
-    // own-write hash survives until a scan sees it, so an own-write whose fs
-    // events split across two debounce cycles is never spuriously reported.
-    let consumed: Vec<String> = scanned
-        .iter()
-        .map(|s| &s.hash)
-        .filter(|h| state.own_writes.contains(*h))
-        .cloned()
-        .collect();
-    for h in &consumed {
-        state.own_writes.remove(h);
-    }
+    let changes = reconcile::reconcile(&state.known, &scanned);
     drop(state);
 
     if !changes.is_empty() {
@@ -313,6 +296,29 @@ mod tests {
         let result = rescan(notes_dir);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].hash, content_hash(content.as_bytes()));
+    }
+
+    #[test]
+    fn external_revert_after_rapid_autosaves_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "01CCCCCCCCCCCCCCCCCCCCCCCCCC";
+        let path = dir.path().join(format!("{id}-note.md"));
+        let earlier = note_content(id) + "first autosave\n";
+        let latest = note_content(id) + "latest autosave\n";
+        // Both saves complete before a watcher scan observes the first hash.
+        fs::write(&path, &earlier).unwrap();
+        fs::write(&path, &latest).unwrap();
+        let state = Arc::new(Mutex::new(WatchState::new(vec![Known {
+            id: id.into(), path: path.to_string_lossy().into_owned(),
+            hash: content_hash(latest.as_bytes()),
+        }])));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let dispatch = |changes| { tx.send(changes).unwrap(); };
+        reconcile_and_dispatch(dir.path(), &state, &dispatch);
+        assert!(rx.try_recv().is_err(), "The current autosave is already known");
+        fs::write(&path, &earlier).unwrap();
+        reconcile_and_dispatch(dir.path(), &state, &dispatch);
+        assert_eq!(rx.try_recv().unwrap(), vec![Change::Modified(id.into())]);
     }
 
     // ── watch integration tests ──────────────────────────────────────────────
