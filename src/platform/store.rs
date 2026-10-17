@@ -185,7 +185,7 @@ pub fn save_to(target: &Path, note: &Note) -> std::io::Result<String> {
 
 /// Path-aware optimistic-concurrency save: writes to `target` if the on-disk
 /// file at `target` still hashes to `base_hash`; otherwise writes a conflict
-/// copy next to `target` (`<stem>.conflict-<ts>.md`) and returns `Conflict`.
+/// copy next to `target` (`<stem>.conflict-<ts>-<id>.md`) and returns `Conflict`.
 /// `base_hash == ""` asserts the target does not yet exist (present file → Conflict).
 pub fn save_checked_to(
     target: &Path,
@@ -203,12 +203,16 @@ pub fn save_checked_to(
     Ok(SaveOutcome::Saved(content_hash(&bytes)))
 }
 
-/// Write a conflict copy alongside `target`: `<stem>.conflict-<ts>.md`.
+/// A conflict copy is a distinct note. Give it a fresh id before a watcher can
+/// discover it, preserving the original's identity during the next load. The
+/// id in the filename also prevents repeated timestamps from overwriting drafts.
 fn write_conflict_next_to(target: &Path, note: &Note, ts: &str) -> std::io::Result<PathBuf> {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("note");
-    let conflict_path = parent.join(format!("{stem}.conflict-{ts}.md"));
-    let bytes = frontmatter::serialize(note).into_bytes();
+    let mut copy = note.clone();
+    copy.id = ulid::Ulid::new().to_string();
+    let conflict_path = parent.join(format!("{stem}.conflict-{ts}-{}.md", copy.id));
+    let bytes = frontmatter::serialize(&copy).into_bytes();
     atomic_write(&conflict_path, &bytes)?;
     Ok(conflict_path)
 }
@@ -586,6 +590,38 @@ mod tests {
             !conflict_name.contains("changed-title"),
             "conflict filename must NOT use slug(), got: {conflict_name}"
         );
+    }
+
+    #[test]
+    fn conflict_copies_keep_distinct_ids_and_original_identity_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = make_paths(dir.path().to_str().unwrap());
+        fs::create_dir_all(paths.notes_dir()).unwrap();
+        let target = paths.notes_dir().join(format!("{VALID_ID}-frozen.md"));
+        let mut note = make_note(VALID_ID);
+        let base = save_to(&target, &note).unwrap();
+        let mut external = note.clone();
+        external.body = "External edit".into();
+        save_to(&target, &external).unwrap();
+        let mut copies = Vec::new();
+        for body in ["First draft", "Second draft"] {
+            note.body = body.into();
+            let outcome = save_checked_to(&target, &note, &base, "same-timestamp").unwrap();
+            let SaveOutcome::Conflict(path) = outcome else { panic!("expected conflict") };
+            let copy = frontmatter::parse(&fs::read_to_string(&path).unwrap());
+            assert_ne!(copy.id, VALID_ID);
+            assert_eq!(copy.body, body);
+            assert_eq!(copy.extra, note.extra);
+            copies.push(path);
+        }
+        assert_ne!(copies[0], copies[1], "Repeated timestamps cannot overwrite earlier drafts");
+        let loaded = load_all(&paths, &mut SeqIdGen::new()).unwrap();
+        assert_eq!(loaded.len(), 3);
+        let original = loaded.iter().find(|n| n.path == target).unwrap();
+        assert_eq!(original.note.id, VALID_ID);
+        assert_eq!(original.note.body, "External edit");
+        assert_eq!(loaded.iter().filter(|n| n.note.id == VALID_ID).count(), 1);
+        for copy in copies { assert!(loaded.iter().any(|n| n.path == copy)); }
     }
 
     #[test]
