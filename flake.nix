@@ -28,7 +28,7 @@
         {
           default = pkgs.mkShell {
             inputsFrom = [ self.packages.${system}.default ];
-            packages = with pkgs; [ rustfmt clippy rust-analyzer ];
+            packages = with pkgs; [ cargo rustc rustfmt clippy rust-analyzer python3 glib ];
             env.RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           };
       });

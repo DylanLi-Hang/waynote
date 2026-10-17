@@ -52,7 +52,12 @@ impl SurfaceManager {
                     window.set_monitor(Some(mon));
                 }
                 window.set_layer(layer.to_layer());
-                window.set_namespace(Some("waynote"));
+                let namespace = if app.application_id().as_deref() == Some("dev.mryll.waynote.development") {
+                    "waynote-dev"
+                } else {
+                    "waynote"
+                };
+                window.set_namespace(Some(namespace));
                 window.set_keyboard_mode(KeyboardMode::None);
                 for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
                     window.set_anchor(edge, true);

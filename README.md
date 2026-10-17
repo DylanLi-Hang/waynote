@@ -86,6 +86,10 @@ nix profile install github:mryll/waynote
 nix develop                         # dev shell with cargo, clippy, rust-analyzer
 ```
 
+For isolated local development without a system switch, run `./scripts/dev run`
+or see [Developing on NixOS](docs/development.md) for temporary Meta+N bindings
+and automated checks.
+
 Do **not** run `waynote install-user-assets` on a Nix install: it writes the
 wrapped store binary into the generated unit, which bypasses the GTK wrapper
 and breaks after garbage collection. Do **not** use
