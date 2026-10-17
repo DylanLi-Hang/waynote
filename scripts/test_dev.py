@@ -76,6 +76,26 @@ class DevelopmentTest(unittest.TestCase):
         with patch.object(Path, "read_bytes", side_effect=[binary, b"WAYNOTE_DEV=1\0"]):
             self.assertFalse(dev.owned_child({"child_pid": 999}))
 
+    def test_empty_child_cmdline_never_reads_environ(self):
+        with patch.object(Path, "read_bytes", return_value=b"") as read:
+            self.assertFalse(dev.owned_child({"child_pid": 999}))
+            read.assert_called_once()
+
+    def test_child_exiting_between_identity_reads_is_not_owned(self):
+        binary = dev.os.fsencode(dev.REPO / "target/debug/waynote") + b"\0"
+        for state in ("Z", "X"):
+            with self.subTest(state=state), \
+                    patch.object(Path, "read_bytes", side_effect=[binary, PermissionError()]), \
+                    patch.object(Path, "read_text", return_value=f"Name:\twaynote\nState:\t{state} (dead)\n"):
+                self.assertFalse(dev.owned_child({"child_pid": 999}))
+
+    def test_live_unreadable_child_is_not_forgotten(self):
+        binary = dev.os.fsencode(dev.REPO / "target/debug/waynote") + b"\0"
+        with patch.object(Path, "read_bytes", side_effect=[binary, PermissionError()]), \
+                patch.object(Path, "read_text", return_value="State:\tS (sleeping)\n"):
+            with self.assertRaises(PermissionError):
+                dev.owned_child({"child_pid": 999})
+
     def test_rejected_quit_preserves_child_and_recovery_state_and_restores_binding(self):
         with tempfile.TemporaryDirectory() as directory:
             state_file = Path(directory) / "session.json"

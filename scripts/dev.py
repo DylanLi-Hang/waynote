@@ -121,12 +121,24 @@ def owned_child(state):
         return False
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        if cmdline[0] != os.fsencode(REPO / "target/debug/waynote"):
+            return False
         environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
-        return (cmdline[0] == os.fsencode(REPO / "target/debug/waynote")
-                and b"WAYNOTE_DEV=1" in environment
+        return (b"WAYNOTE_DEV=1" in environment
                 and os.fsencode("XDG_DATA_HOME=" + str(WORK / "data")) in environment)
     except (FileNotFoundError, ProcessLookupError):
         return False
+    except PermissionError:
+        # The child can exit between the cmdline and environ reads. Only a
+        # proven dead process is safe to forget; keep live unreadable state.
+        try:
+            status = Path(f"/proc/{pid}/status").read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            return False
+        if any(line.startswith("State:") and line.split()[1] in {"Z", "X"}
+               for line in status.splitlines()):
+            return False
+        raise
 
 
 def quit_child(state):
