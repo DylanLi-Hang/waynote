@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / "target" / "dev"
 STATE = WORK / "session.json"
 DESCRIPTION = "Waynote development (temporary)"
+APP_CLASS = "dev.mryll.waynote.development"
 
 
 def execute(*args, **kwargs):
@@ -38,11 +39,7 @@ def seed(root=WORK):
             '---\nid: 01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\ncolor: blue\n---\n'
             '# [DEV] Waynote\n\nIsolated development notes.\n\n'
             '- [ ] Try a checkbox\n- [x] Development data is separate\n\n'
-            'Double-click to edit; Esc saves in the current version.\n')
-    config = root / "config" / "waynote" / "config.toml"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    if not config.exists():
-        config.write_text('tray_enabled = false\n')
+            'Click text to edit; leaving the editor saves and shows Preview.\n')
 
 
 def binds():
@@ -56,6 +53,27 @@ def lua(code):
     result = execute("hyprctl", "eval", code, capture_output=True, text=True)
     if result.stdout.strip() != "ok":
         raise RuntimeError(f"Hyprland Lua failed: {result.stdout} {result.stderr}")
+
+
+def dev_client(state):
+    result = execute("hyprctl", "clients", "-j", capture_output=True, text=True)
+    return next((window for window in json.loads(result.stdout)
+                 if window.get("class") == APP_CLASS
+                 and window.get("pid") == state.get("child_pid")), None)
+
+
+def float_window(state):
+    """Change only this session's mapped dev window; no persistent rules to undo."""
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return
+    deadline = time.monotonic() + 3
+    while not dev_client(state):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Development board did not map within 3 seconds")
+        time.sleep(0.1)
+    lua('for _, window in ipairs(hl.get_windows()) do '
+        f'if window.class == {json.dumps(APP_CLASS)} and window.pid == {int(state["child_pid"])} then '
+        'hl.dispatch(hl.dsp.window.float({ window = window, action = "enable" })) end end')
 
 
 def original_binding(current, config):
@@ -162,14 +180,14 @@ def run(take_binding):
                                          start_new_session=True)
                 state["child_pid"] = child.pid
                 write_state(state)
+                float_window(state)
                 if take_binding:
                     command = shlex.join([str(REPO / "scripts" / "dev"), "toggle"])
                     lua('hl.unbind("SUPER + N"); '
                         f'hl.bind("SUPER + N", hl.dsp.exec_cmd({json.dumps(command)}), '
                         f'{{ description = {json.dumps(DESCRIPTION)} }})')
                 print(f"Waynote DEV — data and logs: {WORK}\n"
-                      "Ctrl+C or scripts/dev stop ends this session.\n"
-                      "Current version: save edits with Esc before restarting.", flush=True)
+                      "Ctrl+C or scripts/dev stop ends this session.", flush=True)
                 if child.wait() != 0:
                     raise RuntimeError("Development app failed; inspect target/dev/app.log")
         except KeyboardInterrupt:
@@ -210,9 +228,15 @@ def main():
     elif args.command == "package":
         execute("nix", "build", ".#default", "--no-link", "--print-out-paths", cwd=REPO)
     else:
-        if not owned_process(read_state()):
+        state = read_state()
+        if not owned_process(state):
             raise RuntimeError("Start scripts/dev run before sending development commands")
+        hyprland = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+        showing = args.command in ("new", "show-all") or (
+            args.command == "toggle" and hyprland and not dev_client(state))
         execute(str(REPO / "target" / "debug" / "waynote"), args.command, env=dev_env())
+        if showing:
+            float_window(state)
 
 
 if __name__ == "__main__":

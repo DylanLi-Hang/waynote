@@ -27,11 +27,12 @@ class DevelopmentTest(unittest.TestCase):
             note = next(notes.glob("*.md"))
             note.write_text("# Keep my development edits\n")
             config = root / "config/waynote/config.toml"
-            config.write_text("tray_enabled = true\n")
+            config.parent.mkdir(parents=True)
+            config.write_text('default_color = "blue"\n')
             dev.seed(root)
             self.assertEqual(len(list(notes.glob("*.md"))), 1)
             self.assertEqual(note.read_text(), "# Keep my development edits\n")
-            self.assertEqual(config.read_text(), "tray_enabled = true\n")
+            self.assertEqual(config.read_text(), 'default_color = "blue"\n')
 
     def test_lua_callback_restored_from_original_source_not_numeric_id(self):
         line = 'hl.bind("SUPER + N", hl.dsp.exec_cmd("/nix/store/example/bin/waynote toggle"), { description = "Toggle Waynote notes" })'
@@ -75,6 +76,24 @@ class DevelopmentTest(unittest.TestCase):
                 patch.object(dev.os, "kill") as kill:
             dev.stop_orphan({"child_pid": 999})
             kill.assert_not_called()
+
+    def test_floating_requires_exact_development_class_and_child_pid(self):
+        from types import SimpleNamespace
+        clients = [
+            {"class": "dev.mryll.waynote", "pid": 123},
+            {"class": dev.APP_CLASS, "pid": 456},
+            {"class": dev.APP_CLASS, "pid": 123},
+        ]
+        with patch.object(dev, "execute", return_value=SimpleNamespace(stdout=dev.json.dumps(clients))):
+            self.assertEqual(dev.dev_client({"child_pid": 123}), clients[2])
+            self.assertIsNone(dev.dev_client({"child_pid": 789}))
+        with patch.dict(dev.os.environ, HYPRLAND_INSTANCE_SIGNATURE="test"), \
+                patch.object(dev, "dev_client", return_value=clients[2]), patch.object(dev, "lua") as lua:
+            dev.float_window({"child_pid": 123})
+            code = lua.call_args.args[0]
+            self.assertIn('window.class == "dev.mryll.waynote.development" and window.pid == 123', code)
+            self.assertIn('action = "enable"', code)
+            self.assertNotIn("window_rule", code)
 
     def test_stale_pid_never_targets_this_process(self):
         self.assertFalse(dev.owned_process({"pid": dev.os.getpid()}))
