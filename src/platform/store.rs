@@ -164,10 +164,10 @@ fn read_hash_if_exists(path: &Path) -> std::io::Result<Option<String>> {
 /// Returns `true` when the on-disk state differs from what the caller expected.
 ///
 /// `base_hash == ""` asserts absence: any present file is a conflict. Otherwise
-/// a present file whose hash differs from `base_hash` is a conflict.
+/// both a missing file and a changed hash indicate an external change.
 fn is_conflict(base_hash: &str, disk_hash: &Option<String>) -> bool {
     let Some(h) = disk_hash else {
-        return false;
+        return !base_hash.is_empty();
     };
     if base_hash.is_empty() {
         return true;
@@ -622,6 +622,28 @@ mod tests {
         assert_eq!(original.note.body, "External edit");
         assert_eq!(loaded.iter().filter(|n| n.note.id == VALID_ID).count(), 1);
         for copy in copies { assert!(loaded.iter().any(|n| n.path == copy)); }
+    }
+
+    #[test]
+    fn external_delete_or_rename_does_not_recreate_a_previously_loaded_path() {
+        for rename in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join(format!("{VALID_ID}-frozen.md"));
+            let renamed = dir.path().join(format!("{VALID_ID}-renamed.md"));
+            let mut note = make_note(VALID_ID);
+            let base = save_to(&target, &note).unwrap();
+            let original = fs::read(&target).unwrap();
+            if rename { fs::rename(&target, &renamed).unwrap(); }
+            else { fs::remove_file(&target).unwrap(); }
+            note.body = "Latest local draft".into();
+            let outcome = save_checked_to(&target, &note, &base, "after-external-change").unwrap();
+            let SaveOutcome::Conflict(copy) = outcome else { panic!("expected conflict") };
+            assert!(!target.exists(), "Saving must not silently undo an external delete or rename");
+            let recovery = frontmatter::parse(&fs::read_to_string(copy).unwrap());
+            assert_eq!(recovery.body, "Latest local draft");
+            assert_ne!(recovery.id, note.id);
+            if rename { assert_eq!(fs::read(&renamed).unwrap(), original); }
+        }
     }
 
     #[test]
