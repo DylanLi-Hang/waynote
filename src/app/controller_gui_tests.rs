@@ -28,6 +28,26 @@ fn checkbox(widget: &gtk::Widget) -> Option<gtk::CheckButton> {
     }
     None
 }
+fn selector_button(board: &Controller, title: &str) -> gtk::Button {
+    let mut row = board.selector.first_child();
+    while let Some(widget) = row {
+        let button = widget
+            .clone()
+            .downcast::<gtk::ListBoxRow>()
+            .unwrap()
+            .child()
+            .unwrap()
+            .downcast::<gtk::Button>()
+            .unwrap();
+        let label = button.label().unwrap();
+        if label.lines().next().unwrap().trim_start_matches("✓ ") == title {
+            return button;
+        }
+        row = widget.next_sibling();
+    }
+    panic!("Missing selector entry: {title}");
+}
+
 #[test]
 #[ignore = "requires an isolated GTK display, XDG directories and D-Bus session"]
 fn board_gui_regressions() {
@@ -148,6 +168,52 @@ fn board_gui_regressions() {
     Controller::edit(&this, &first, None);
     pump();
     assert!(!this.borrow().cards[&first].editing());
+    let select_locked = selector_button(&this.borrow(), "- [ ] Locked task");
+    select_locked.emit_clicked();
+    pump();
+    assert_eq!(this.borrow().active.as_deref(), Some(first.as_str()));
+    assert!(this.borrow().cards[&first].root.has_css_class("waynote-active"));
+    assert!(selector_button(&this.borrow(), "- [ ] Locked task")
+        .label().unwrap().starts_with("✓ "));
+
+    // One column makes the distant selector target deterministic on any display.
+    let (source, destination) = {
+        let mut board = this.borrow_mut();
+        board.flow.set_max_children_per_line(1);
+        let source = board.cards.keys().find(|id| *id != &first).unwrap().clone();
+        let mut destination = String::new();
+        for index in 0..12 {
+            destination = board.insert_note(Note {
+                id: ulid::Ulid::new().to_string(),
+                color: "yellow".into(),
+                locked: true,
+                tags: vec![],
+                extra: BTreeMap::new(),
+                body: format!("# Distant {index}\nRead-only target"),
+            }).unwrap();
+        }
+        (source, destination)
+    };
+    pump();
+    Controller::edit(&this, &source, None);
+    pump();
+    assert!(this.borrow().cards[&source].editing());
+    assert!(!this.borrow().cards[&first].root.has_css_class("waynote-active"));
+    let adjustment = this.borrow().scroller.vadjustment();
+    adjustment.set_value(0.0);
+    let select_distant = selector_button(&this.borrow(), "Distant 11");
+    // Finishing the source editor queues a render tick before revealing the target.
+    select_distant.emit_clicked();
+    let revealed = adjustment.value();
+    assert!(revealed > 0.0, "Fixture must overflow the board");
+    pump();
+    assert!((adjustment.value() - revealed).abs() < 1.0,
+        "Delayed source render must not undo selector reveal");
+    assert_eq!(this.borrow().active.as_deref(), Some(destination.as_str()));
+    assert!(this.borrow().cards[&destination].root.has_css_class("waynote-active"));
+    assert!(!this.borrow().cards[&source].root.has_css_class("waynote-active"));
+    assert!(selector_button(&this.borrow(), "Distant 11")
+        .label().unwrap().starts_with("✓ "));
     {
         let mut board = this.borrow_mut();
         let card = board.cards.get_mut(&first).unwrap();
