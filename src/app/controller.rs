@@ -691,7 +691,7 @@ impl Controller {
             &render::RenderOpts {
                 base_dir: self.paths.notes_dir(),
                 color: card.note.color.clone(),
-                content_width: 280,
+                content_width: render::DEFAULT_CONTENT_WIDTH,
             },
             toggle,
         );
