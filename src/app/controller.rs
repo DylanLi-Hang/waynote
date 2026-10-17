@@ -5,7 +5,7 @@ use crate::{
 };
 use gtk::{gdk, gio, glib, prelude::*};
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::BTreeMap,
     path::PathBuf,
     rc::{Rc, Weak},
@@ -589,7 +589,14 @@ impl Controller {
                     board
                         .cards
                         .get(&id)
-                        .filter(|c| c.editing() && board.active.as_deref() == Some(id.as_str()))
+                        .filter(|c| {
+                            c.editing()
+                                && board.window.is_active()
+                                && !board.selector_popover.is_visible()
+                                && board.active.as_deref() == Some(id.as_str())
+                                && gtk::prelude::GtkWindowExt::focus(&board.window)
+                                    .is_none_or(|focus| focus.is_ancestor(&c.root))
+                        })
                         .map(|c| c.editor.clone())
                 };
                 if let Some(editor) = editor {
@@ -709,18 +716,13 @@ impl Controller {
         let old_scroll = scroll_adjustments(&card.preview.clone().upcast());
         let positions: Vec<_> = old_scroll.iter().map(gtk::Adjustment::value).collect();
         card.preview.set_child(Some(&preview));
-        let mut restore: Vec<_> = scroll_adjustments(&card.preview.clone().upcast())
+        let restore: Vec<_> = scroll_adjustments(&card.preview.clone().upcast())
             .into_iter()
             .zip(positions)
             .collect();
-        restore.push((
-            self.scroller.vadjustment(),
-            self.scroller.vadjustment().value(),
-        ));
-        let mut first_frame = true;
+        let first_frame = Cell::new(true);
         card.preview.add_tick_callback(move |_, _| {
-            if first_frame {
-                first_frame = false;
+            if first_frame.replace(false) {
                 return glib::ControlFlow::Continue;
             }
             for (adjustment, value) in &restore {
@@ -835,6 +837,9 @@ impl Controller {
             return true;
         };
         if !self.cards.get(&id).is_some_and(Card::editing) {
+            if let Some(card) = self.cards.get(&id) {
+                card.root.remove_css_class("waynote-active");
+            }
             return true;
         }
         if !self.save_card(&id) {
@@ -924,6 +929,7 @@ impl Controller {
                         );
                         card.root.add_css_class("waynote-active");
                         board.active = Some(id.clone());
+                        board.refresh_selector();
                         values
                     };
                     if let Some(bounds) = root.compute_bounds(&flow) {

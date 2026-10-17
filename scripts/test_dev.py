@@ -41,6 +41,9 @@ class DevelopmentTest(unittest.TestCase):
             config.write_text(line + "\n")
             binding = {"dispatcher": "__lua", "arg": "174", "description": "Toggle Waynote notes"}
             self.assertEqual(dev.original_binding([binding], config), line)
+            fallback = '    hl.bind("SUPER + N", hl.dsp.exec_cmd("noctalia notes"), { description = "Toggle sticky notes" })'
+            config.write_text(fallback + "\n" + line + "\n")
+            self.assertEqual(dev.original_binding([binding], config), line)
             config.write_text(line + "\n" + line + "\n")
             with self.assertRaises(RuntimeError):
                 dev.original_binding([binding], config)

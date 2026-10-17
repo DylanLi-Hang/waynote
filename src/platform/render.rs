@@ -4,17 +4,16 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gtk::gdk;
-use gtk::glib;
 use gtk::gio;
 use gtk::pango::{Style, Underline};
 use gtk::prelude::*;
 use gtk::{
-    CheckButton, CssProvider, GestureClick, Label,
-    Orientation, Picture, PolicyType, ScrolledWindow, TextTag, TextView, WrapMode,
+    CheckButton, CssProvider, GestureClick,
+    Picture, PolicyType, ScrolledWindow, TextTag, TextView, WrapMode,
 };
 
 use crate::core::markdown::{
-    self, Block, Inline, List, ListItem, RenderDoc, Table,
+    Block, Inline, List, ListItem, RenderDoc, Table,
     classify_image, heading_style, is_web_link, ImageSrc,
 };
 use crate::core::theme::{self, Theme};

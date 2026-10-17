@@ -85,9 +85,11 @@ def original_binding(current, config):
         return (f'hl.bind("SUPER + N", hl.dsp.exec_cmd({json.dumps(binding["arg"])}), '
                 f'{{ description = {json.dumps(binding.get("description", ""))} }})')
     # This machine uses Home Manager's generated, single-line Lua bindings.
-    # Refuse ambiguous configs rather than guessing how to restore a callback.
+    # Match the active description: configs may include a conditional fallback
+    # binding for another shell. Duplicate active candidates remain ambiguous.
     lines = [line.strip() for line in config.read_text().splitlines()
-             if re.match(r'^\s*hl\.bind\("SUPER \+ N"\s*,', line)]
+             if re.match(r'^\s*hl\.bind\("SUPER \+ N"\s*,', line)
+             and json.dumps(binding.get("description", "")) in line]
     if (binding["dispatcher"] != "__lua" or len(lines) != 1
             or 'hl.dsp.exec_cmd(' not in lines[0]
             or json.dumps(binding.get("description", "")) not in lines[0]):
