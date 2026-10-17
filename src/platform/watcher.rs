@@ -171,7 +171,9 @@ fn run_debounce_loop(
         if !got_event {
             return; // stop signal received
         }
-        drain_debounce_window(event_rx, stop_rx, debounce);
+        if !drain_debounce_window(event_rx, stop_rx, debounce) {
+            return;
+        }
         reconcile_and_dispatch(notes_dir, shared_state, on_change);
     }
 }
@@ -193,20 +195,20 @@ fn wait_for_event(
     }
 }
 
-/// Drain remaining events within `debounce` window; stop if stop signal arrives.
+/// Drain remaining events; return false when stopping during the debounce window.
 fn drain_debounce_window(
     event_rx: &std::sync::mpsc::Receiver<()>,
     stop_rx: &std::sync::mpsc::Receiver<()>,
     debounce: Duration,
-) {
+) -> bool {
     let deadline = std::time::Instant::now() + debounce;
     loop {
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         if remaining.is_zero() {
-            break;
+            return true;
         }
         if stop_rx.try_recv().is_ok() {
-            break;
+            return false;
         }
         let _ = event_rx.recv_timeout(remaining.min(Duration::from_millis(20)));
     }
@@ -339,6 +341,32 @@ mod tests {
                 Err(_) => {}
             }
         }
+    }
+
+    #[test]
+    fn dropping_guard_during_debounce_finishes_promptly() {
+        let dir = tempfile::tempdir().unwrap();
+        let (event_tx, event_rx) = std::sync::mpsc::channel();
+        let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel(1);
+        // A queued event makes wait_for_event enter the debounce window even
+        // when guard.drop sends stop before the worker gets scheduled.
+        event_tx.send(()).unwrap();
+        let thread = spawn_debounce_thread(
+            event_rx, stop_rx, Duration::from_secs(30), dir.path().to_path_buf(),
+            Arc::new(Mutex::new(WatchState::new(vec![]))), |_| {},
+        );
+        let guard = WatchGuard {
+            _watcher: notify::recommended_watcher(|_| {}).unwrap(),
+            thread: Some(thread),
+            stop_tx,
+        };
+        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(guard);
+            let _ = dropped_tx.send(());
+        });
+        assert!(dropped_rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+            "dropping the watcher must interrupt its active debounce window");
     }
 
     #[test]
