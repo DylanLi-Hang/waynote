@@ -65,17 +65,38 @@ class DevelopmentTest(unittest.TestCase):
             dev.restore_binding(state)
             lua.assert_called_once()
 
-    def test_orphan_cleanup_requires_both_dev_identity_and_data_path(self):
+    def test_orphan_identity_requires_both_dev_identity_and_data_path(self):
         binary = dev.os.fsencode(dev.REPO / "target/debug/waynote") + b"\0"
         environment = b"WAYNOTE_DEV=1\0" + dev.os.fsencode("XDG_DATA_HOME=" + str(dev.WORK / "data")) + b"\0"
-        with patch.object(Path, "read_bytes", side_effect=[binary, environment]), \
-                patch.object(dev.os, "kill") as kill:
-            dev.stop_orphan({"child_pid": 999})
-            kill.assert_called_once_with(999, dev.signal.SIGTERM)
-        with patch.object(Path, "read_bytes", side_effect=[binary, b"WAYNOTE_DEV=1\0"]), \
-                patch.object(dev.os, "kill") as kill:
-            dev.stop_orphan({"child_pid": 999})
-            kill.assert_not_called()
+        with patch.object(Path, "read_bytes", side_effect=[binary, environment]):
+            self.assertTrue(dev.owned_child({"child_pid": 999}))
+        with patch.object(Path, "read_bytes", side_effect=[binary, b"WAYNOTE_DEV=1\0"]):
+            self.assertFalse(dev.owned_child({"child_pid": 999}))
+
+    def test_rejected_quit_preserves_child_and_recovery_state_and_restores_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_file = Path(directory) / "session.json"
+            state = {"pid": 123, "child_pid": 999, "restore": "original()"}
+            state_file.write_text(dev.json.dumps(state))
+            with patch.object(dev, "STATE", state_file), \
+                    patch.object(dev, "owned_process", return_value=False), \
+                    patch.object(dev, "owned_child", return_value=True), \
+                    patch.object(dev, "execute") as execute, \
+                    patch.object(dev.time, "monotonic", side_effect=[0, 6]), \
+                    patch.object(dev, "restore_binding") as restore, \
+                    patch.object(dev.os, "kill") as kill:
+                with self.assertRaisesRegex(RuntimeError, "kept running"):
+                    dev.stop()
+                execute.assert_called_once_with(str(dev.REPO / "target/debug/waynote"), "quit",
+                                                env=dev.dev_env(), timeout=5)
+                kill.assert_not_called()
+                restore.assert_called_once_with(state)
+                self.assertEqual(dev.json.loads(state_file.read_text()), state)
+
+    def test_stale_child_pid_never_cold_starts_app_to_quit(self):
+        with patch.object(dev, "owned_child", return_value=False), patch.object(dev, "execute") as execute:
+            dev.quit_child({"child_pid": 999})
+            execute.assert_not_called()
 
     def test_floating_requires_exact_development_class_and_child_pid(self):
         from types import SimpleNamespace

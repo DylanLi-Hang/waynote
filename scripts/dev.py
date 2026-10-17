@@ -113,19 +113,31 @@ def write_state(state):
     temporary.replace(STATE)
 
 
-def stop_orphan(state):
+def owned_child(state):
     pid = state.get("child_pid")
     if not pid:
-        return
+        return False
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
         environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
-        if (cmdline[0] == os.fsencode(REPO / "target/debug/waynote")
+        return (cmdline[0] == os.fsencode(REPO / "target/debug/waynote")
                 and b"WAYNOTE_DEV=1" in environment
-                and os.fsencode("XDG_DATA_HOME=" + str(WORK / "data")) in environment):
-            os.kill(pid, signal.SIGTERM)
+                and os.fsencode("XDG_DATA_HOME=" + str(WORK / "data")) in environment)
     except (FileNotFoundError, ProcessLookupError):
-        pass
+        return False
+
+
+def quit_child(state):
+    # A stale PID must never start a fresh app merely to send it `quit`.
+    if not owned_child(state):
+        return
+    execute(str(REPO / "target/debug/waynote"), "quit", env=dev_env(), timeout=5)
+    # The CLI can succeed even when a save error makes the board reject quit.
+    deadline = time.monotonic() + 5
+    while owned_child(state):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Development board kept running. Resolve its save error and retry scripts/dev stop.")
+        time.sleep(0.1)
 
 
 def read_state():
@@ -150,9 +162,12 @@ def stop():
         if STATE.exists():
             raise RuntimeError("Development session did not stop; inspect target/dev/app.log")
     elif state:
-        stop_orphan(state)
-        restore_binding(state)
-        STATE.unlink(missing_ok=True)
+        try:
+            quit_child(state)
+        finally:
+            restore_binding(state)
+            if not owned_child(state):
+                STATE.unlink(missing_ok=True)
 
 
 def run(take_binding):
@@ -193,15 +208,13 @@ def run(take_binding):
         except KeyboardInterrupt:
             pass
         finally:
-            if child is not None and child.poll() is None:
-                child.terminate()
-                try:
-                    child.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait()
-            restore_binding(state)
-            STATE.unlink(missing_ok=True)
+            try:
+                if child is not None and child.poll() is None:
+                    quit_child(state)
+            finally:
+                restore_binding(state)
+                if not owned_child(state):
+                    STATE.unlink(missing_ok=True)
 
 
 def main():
@@ -216,7 +229,8 @@ def main():
     elif args.command == "stop":
         stop()
     elif args.command == "status":
-        print("Running" if owned_process(read_state()) else "Stopped")
+        state = read_state()
+        print("Running" if owned_process(state) or owned_child(state) else "Stopped")
         print(f"Data and logs: {WORK}")
     elif args.command == "check":
         execute(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_dev.py", cwd=REPO)
@@ -229,7 +243,7 @@ def main():
         execute("nix", "build", ".#default", "--no-link", "--print-out-paths", cwd=REPO)
     else:
         state = read_state()
-        if not owned_process(state):
+        if not owned_child(state):
             raise RuntimeError("Start scripts/dev run before sending development commands")
         hyprland = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
         showing = args.command in ("new", "show-all") or (
@@ -242,5 +256,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
         sys.exit(str(error))
