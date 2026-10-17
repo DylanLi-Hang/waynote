@@ -532,7 +532,12 @@ impl Controller {
         });
         resolve.set_visible(false);
         root.append(&resolve);
-        self.flow.insert(&root, -1);
+        // FlowBox activation must leave focus with the card's interactive content.
+        let child = gtk::FlowBoxChild::builder()
+            .child(&root)
+            .focusable(false)
+            .build();
+        self.flow.insert(&child, -1);
         let saved_body = loaded.note.body.clone();
         self.cards.insert(
             id.clone(),

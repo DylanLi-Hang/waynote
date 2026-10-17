@@ -135,6 +135,32 @@ fn board_gui_regressions() {
     click.emit_by_name::<()>("released", &[&1i32, &12.0f64, &12.0f64]);
     pump();
     assert!(this.borrow().cards[&first].editing());
+    // FlowBox activates its child after a TextView click. That must not take
+    // focus from the editor and turn a caret move or text selection into Preview.
+    let child = this.borrow().cards[&first]
+        .root
+        .parent()
+        .unwrap()
+        .downcast::<gtk::FlowBoxChild>()
+        .unwrap();
+    let buffer = editor.buffer();
+    for offset in [4, 12] {
+        buffer.place_cursor(&buffer.iter_at_offset(offset));
+        child.emit_by_name::<()>("activate", &[]);
+        pump();
+        assert!(
+            this.borrow().cards[&first].editing(),
+            "Editor click left Edit"
+        );
+        assert!(editor.has_focus(), "Card container stole editor focus");
+        assert_eq!(buffer.cursor_position(), offset);
+    }
+    buffer.select_range(&buffer.iter_at_offset(2), &buffer.iter_at_offset(10));
+    child.emit_by_name::<()>("activate", &[]);
+    pump();
+    assert!(this.borrow().cards[&first].editing());
+    assert!(editor.has_focus());
+    assert!(buffer.has_selection());
     editor.buffer().set_text("Uncommitted newest content");
     assert_eq!(
         this.borrow().cards[&first].raw(),
