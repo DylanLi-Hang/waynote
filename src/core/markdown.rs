@@ -461,11 +461,7 @@ fn skip_until_end(
     }
 }
 
-// ── toggle_task / task_count ─────────────────────────────────────────
-
-pub fn task_count(raw: &str) -> usize {
-    collect_task_ranges(raw).len()
-}
+// ── toggle_task ─────────────────────────────────────────
 
 /// Flip the (0-based) Nth GFM task checkbox in `raw`.
 pub fn toggle_task(raw: &str, index: usize) -> String {
@@ -967,7 +963,7 @@ mod tests {
         assert_eq!(heading_style(9), heading_style(6));
     }
 
-    // ── toggle_task / task_count ──────────────────────────────────────
+    // ── toggle_task ──────────────────────────────────────
 
     #[test]
     fn toggle_task_0_unchecked_to_checked() {
@@ -999,12 +995,6 @@ mod tests {
     }
 
     #[test]
-    fn task_count_excludes_code_block() {
-        let md = "- [ ] real\n\n```\n- [ ] fake\n```\n";
-        assert_eq!(task_count(md), 1, "code block [ ] must not be counted");
-    }
-
-    #[test]
     fn toggle_task_code_block_excluded_real_toggled() {
         let md = "- [ ] real\n\n```\n- [ ] fake\n```\n";
         let result = toggle_task(md, 0);
@@ -1027,16 +1017,6 @@ mod tests {
         assert_eq!(result, "- [x] café — 日本語");
         // round-trips back unchanged
         assert_eq!(toggle_task(&result, 0), md);
-    }
-
-    #[test]
-    fn task_count_zero() {
-        assert_eq!(task_count("no tasks here"), 0);
-    }
-
-    #[test]
-    fn task_count_two() {
-        assert_eq!(task_count("- [ ] a\n- [x] b\n"), 2);
     }
 
     // ── link/image classification ────────────────────────────────────

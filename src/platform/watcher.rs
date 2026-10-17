@@ -1,6 +1,3 @@
-// platform::watcher is not yet wired into the binary entry point. Suppress
-// dead-code warnings until main.rs integrates it. Remove once wired up.
-
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

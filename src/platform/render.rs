@@ -10,7 +10,7 @@ use gtk::pango::{Style, Underline};
 use gtk::prelude::*;
 use gtk::{
     CheckButton, CssProvider, GestureClick, Label,
-    Orientation, Picture, TextTag, TextView, WrapMode,
+    Orientation, Picture, PolicyType, ScrolledWindow, TextTag, TextView, WrapMode,
 };
 
 use crate::core::markdown::{
@@ -412,7 +412,7 @@ impl<'a> RenderCtx<'a> {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Options for `render_view` / `render_note`.
+/// Options for `render_view`.
 pub struct RenderOpts {
     /// Base directory for resolving relative image paths.
     pub base_dir: PathBuf,
@@ -909,6 +909,7 @@ fn wire_link_click(view: &TextView, link_map: HashMap<String, String>) {
 }
 
 fn handle_link_click(view: &TextView, map: &HashMap<String, String>, x: f64, y: f64) {
+    if view.buffer().has_selection() { return; }
     use gtk::TextWindowType;
     let (bx, by) = view.window_to_buffer_coords(TextWindowType::Widget, x as i32, y as i32);
     let Some(iter) = view.iter_at_location(bx, by) else { return };
