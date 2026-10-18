@@ -2,6 +2,7 @@
 return function(path)
     local bindings, calls, events, handles, moves = {}, {}, {}, {}, {}
     local active, windows
+    local specials = {}
     local fake = {
         on = function(event, callback)
             local handle = { callback = callback, removed = false }
@@ -10,12 +11,13 @@ return function(path)
             handles[#handles + 1] = handle
             return handle
         end,
-        dsp = { window = {
+        dsp = { focus = function(spec) return spec end, window = {
             float = function(spec) return spec end,
             move = function(spec) return spec end,
         } },
         dispatch = function(spec) moves[#moves + 1] = spec end,
         get_active_window = function() return active end,
+        get_active_special_workspace = function(monitor) return specials[monitor.name] end,
         get_windows = function() return windows end,
         exec_cmd = function(command) calls[#calls + 1] = command end,
         bind = function(key, callback, options)
@@ -74,6 +76,28 @@ return function(path)
     events["window.close"].callback(note)
     events["window.open"].callback(remapped)
     assert(#moves == 6, "A tiled note must not restore an obsolete floating position")
+    note.floating, note.pinned = true, true
+    local target = { class = "chatgpt", visible = true }
+    specials["eDP-1"] = { last_window = target }
+    active = note
+    events["window.close"].callback(note)
+    assert(#moves == 7 and moves[7].window == target,
+        "Closing a focused pinned note must return focus to the visible special workspace")
+    active = target
+    events["window.close"].callback(note)
+    assert(#moves == 7, "An unfocused note must not change focus")
+    active = note
+    specials["eDP-1"] = nil
+    specials["other"] = { last_window = target }
+    events["window.close"].callback(note)
+    assert(#moves == 7, "A special workspace on another monitor must not receive focus")
+    specials["eDP-1"] = { last_window = target }
+    target.visible = false
+    events["window.close"].callback(note)
+    assert(#moves == 7, "A stale hidden target must not be focused")
+    target.visible, note.pinned = true, false
+    events["window.close"].callback(note)
+    assert(#moves == 7, "Unpinned notes retain compositor focus behavior")
     cleanup()
     for _, handle in ipairs(handles) do assert(handle.removed) end
     for _, binding in ipairs(bindings) do assert(binding.removed) end

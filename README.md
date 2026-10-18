@@ -76,7 +76,9 @@ ignores hover, note-internal clicks and popovers. It only notifies a visible
 Waynote window. It also remembers a floating note’s position on unmap and restores
 it when the same process remaps on the same monitor. A new process or different
 monitor uses normal compositor placement; the position is kept only for this
-Hyprland configuration session. Reloading Hyprland removes the bindings and event
+Hyprland configuration session. For pinned notes, hiding returns focus to the
+visible special workspace on the same monitor so it stays open. Hiding an
+unfocused note does not change focus. Reloading Hyprland removes the bindings and event
 handlers if the helper is removed from the config. `scripts/dev run --bind` installs/removes them automatically
 for the isolated development app. This integration requires Hyprland's Lua API.
 
