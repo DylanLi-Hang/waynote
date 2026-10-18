@@ -59,8 +59,9 @@ hl.bind("SUPER + N", hl.dsp.exec_cmd("waynote toggle"))
 hl.window_rule({ match = { class = "^dev[.]mryll[.]waynote$" }, float = true })
 ```
 
-To save and return to Preview when clicking another window, load the optional
-Lua helper after these rules (use its absolute path):
+To keep the floating position across hide/show and save/return to Preview when
+clicking another window, load the optional Lua helper after these rules (use its
+absolute path):
 
 ```lua
 dofile("/path/to/waynote/packaging/hyprland.lua")()
@@ -69,8 +70,11 @@ dofile("/path/to/waynote/packaging/hyprland.lua")()
 Nix packages install the helper at `$out/share/waynote/hyprland.lua`.
 It observes left/right/middle button releases without consuming clicks, and
 ignores hover, note-internal clicks and popovers. It only notifies a visible
-Waynote window. Reloading Hyprland removes the bindings if the helper is removed
-from the config. `scripts/dev run --bind` installs/removes them automatically
+Waynote window. It also remembers a floating note’s position on unmap and restores
+it when the same process remaps on the same monitor. A new process or different
+monitor uses normal compositor placement; the position is kept only for this
+Hyprland configuration session. Reloading Hyprland removes the bindings and event
+handlers if the helper is removed from the config. `scripts/dev run --bind` installs/removes them automatically
 for the isolated development app. This integration requires Hyprland's Lua API.
 
 For a traditional Hyprland config:

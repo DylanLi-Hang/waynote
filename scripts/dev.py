@@ -80,9 +80,13 @@ def float_window(state):
         width, height = 400, 440
     lua('for _, window in ipairs(hl.get_windows()) do '
         f'if window.class == {json.dumps(APP_CLASS)} and window.pid == {int(state["child_pid"])} then '
-        'hl.dispatch(hl.dsp.window.float({ window = window, action = "enable" })); '
+        'local position = window.floating and window.at; '
+        'if not window.floating then '
+        'hl.dispatch(hl.dsp.window.float({ window = window, action = "enable" })) end; '
         f'hl.dispatch(hl.dsp.window.resize({{ window = window, x = {max(360, width)}, '
-        f'y = {max(300, height)}, relative = false }})) end end')
+        f'y = {max(300, height)}, relative = false }})); '
+        'if position then hl.dispatch(hl.dsp.window.move({ window = window, '
+        'x = position.x, y = position.y, relative = false })) end end end')
 
 
 def original_binding(current, config):
