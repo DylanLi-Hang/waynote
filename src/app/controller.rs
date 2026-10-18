@@ -708,10 +708,15 @@ impl Controller {
         if !card.note.locked {
             let gesture = gtk::GestureClick::new();
             gesture.set_button(1);
+            // Handle the second press before TextView claims it for word selection.
+            gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
             let view = preview.clone();
             let weak = self.weak.clone();
             let id = id.to_string();
-            gesture.connect_released(move |g, _, x, y| {
+            gesture.connect_pressed(move |g, presses, x, y| {
+                if presses != 2 {
+                    return;
+                }
                 let Some(line) = preview_edit_line(&view, x, y) else {
                     return;
                 };
@@ -1135,7 +1140,7 @@ fn disable_tasks(widget: &gtk::Widget, locked: bool) {
 mod gui_tests;
 
 // GtkText is an implementation child; table cells are nested TextViews. Let
-// links, selections, checkboxes and images handle their own pointer gestures.
+// links, checkboxes and images handle their own pointer gestures.
 fn preview_edit_line(view: &gtk::TextView, x: f64, y: f64) -> Option<Option<i32>> {
     let mut picked = view.pick(x, y, gtk::PickFlags::DEFAULT);
     let mut target = view.clone();
@@ -1153,9 +1158,6 @@ fn preview_edit_line(view: &gtk::TextView, x: f64, y: f64) -> Option<Option<i32>
             break;
         }
         picked = widget.parent();
-    }
-    if target.buffer().has_selection() {
-        return None;
     }
     let (bx, by) = target.window_to_buffer_coords(
         gtk::TextWindowType::Widget,

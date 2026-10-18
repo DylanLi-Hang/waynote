@@ -208,7 +208,20 @@ fn board_gui_regressions() {
         .filter_map(|item| item.downcast::<gtk::GestureClick>().ok())
         .find(|gesture| gesture.button() == 1)
         .unwrap();
+    click.emit_by_name::<()>("pressed", &[&1i32, &12.0f64, &12.0f64]);
     click.emit_by_name::<()>("released", &[&1i32, &12.0f64, &12.0f64]);
+    pump();
+    assert!(
+        !this.borrow().cards[&first].editing(),
+        "Single click stays in Preview"
+    );
+    // A double click explicitly enters Edit even if Preview text is selected.
+    let preview_buffer = preview.buffer();
+    preview_buffer.select_range(
+        &preview_buffer.start_iter(),
+        &preview_buffer.iter_at_offset(2),
+    );
+    click.emit_by_name::<()>("pressed", &[&2i32, &12.0f64, &12.0f64]);
     pump();
     assert!(this.borrow().cards[&first].editing());
     let buffer = editor.buffer();

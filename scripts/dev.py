@@ -40,7 +40,7 @@ def seed(root=WORK):
             '---\nid: 01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\ncolor: blue\n---\n'
             '# [DEV] Waynote\n\nIsolated development notes.\n\n'
             '- [ ] Try a checkbox\n- [x] Development data is separate\n\n'
-            'Click text to edit; click the title or hide to show Preview.\n')
+            'Double-click text to edit; click the title or hide to show Preview.\n')
 
 
 def binds():
