@@ -51,6 +51,7 @@ Upstream distribution packages still contain the original interface.
 Bind a single shortcut to `waynote toggle`. Cold invocation starts the resident
 app; further invocations use the same instance. The first invocation creates an
 editable note if none exist. Closing the window hides it; `waynote quit` exits.
+Resizing is remembered across hide/show and app restarts.
 
 On Hyprland with Lua config:
 
