@@ -10,6 +10,14 @@ return function(command, app_class)
                 pid = window.pid, monitor = window.monitor.name,
                 x = window.at.x, y = window.at.y,
             } or nil
+            -- Hyprland otherwise picks a normal-workspace window on unmap,
+            -- which dismisses the special workspace beneath a pinned note.
+            local special = window.pinned and window.monitor
+                and hl.get_active_special_workspace(window.monitor)
+            local target = special and special.last_window
+            if hl.get_active_window() == window and target and target.visible then
+                hl.dispatch(hl.dsp.focus({ window = target }))
+            end
         end),
         hl.on("window.open", function(window)
             if window.class ~= app_class or not last_position
