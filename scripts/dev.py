@@ -12,11 +12,13 @@ import signal
 import subprocess
 import sys
 import time
+import tomllib
 
 REPO = Path(__file__).resolve().parent.parent
 WORK = REPO / "target" / "dev"
 STATE = WORK / "session.json"
 DESCRIPTION = "Waynote development (temporary)"
+APP_CLASS = "dev.mryll.waynote.development"
 
 
 def execute(*args, **kwargs):
@@ -38,11 +40,7 @@ def seed(root=WORK):
             '---\nid: 01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\ncolor: blue\n---\n'
             '# [DEV] Waynote\n\nIsolated development notes.\n\n'
             '- [ ] Try a checkbox\n- [x] Development data is separate\n\n'
-            'Double-click to edit; Esc saves in the current version.\n')
-    config = root / "config" / "waynote" / "config.toml"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    if not config.exists():
-        config.write_text('tray_enabled = false\n')
+            'Double-click text to edit; click the title or hide to show Preview.\n')
 
 
 def binds():
@@ -58,6 +56,35 @@ def lua(code):
         raise RuntimeError(f"Hyprland Lua failed: {result.stdout} {result.stderr}")
 
 
+def dev_client(state):
+    result = execute("hyprctl", "clients", "-j", capture_output=True, text=True)
+    return next((window for window in json.loads(result.stdout)
+                 if window.get("class") == APP_CLASS
+                 and window.get("pid") == state.get("child_pid")), None)
+
+
+def float_window(state):
+    """Change only this session's mapped dev window; no persistent rules to undo."""
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        return
+    deadline = time.monotonic() + 3
+    while not dev_client(state):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Development board did not map within 3 seconds")
+        time.sleep(0.1)
+    # Mapping in a tiling layout can overwrite GTK's requested note size.
+    try:
+        geometry = tomllib.loads((WORK / "state/waynote/layout.toml").read_text())
+        width, height = int(geometry["width"]), int(geometry["height"])
+    except (OSError, ValueError, KeyError, TypeError):
+        width, height = 400, 440
+    lua('for _, window in ipairs(hl.get_windows()) do '
+        f'if window.class == {json.dumps(APP_CLASS)} and window.pid == {int(state["child_pid"])} then '
+        'hl.dispatch(hl.dsp.window.float({ window = window, action = "enable" })); '
+        f'hl.dispatch(hl.dsp.window.resize({{ window = window, x = {max(360, width)}, '
+        f'y = {max(300, height)}, relative = false }})) end end')
+
+
 def original_binding(current, config):
     """Lua callbacks cannot be reconstructed from hyprctl's numeric callback ID."""
     if len(current) != 1:
@@ -67,9 +94,11 @@ def original_binding(current, config):
         return (f'hl.bind("SUPER + N", hl.dsp.exec_cmd({json.dumps(binding["arg"])}), '
                 f'{{ description = {json.dumps(binding.get("description", ""))} }})')
     # This machine uses Home Manager's generated, single-line Lua bindings.
-    # Refuse ambiguous configs rather than guessing how to restore a callback.
+    # Match the active description: configs may include a conditional fallback
+    # binding for another shell. Duplicate active candidates remain ambiguous.
     lines = [line.strip() for line in config.read_text().splitlines()
-             if re.match(r'^\s*hl\.bind\("SUPER \+ N"\s*,', line)]
+             if re.match(r'^\s*hl\.bind\("SUPER \+ N"\s*,', line)
+             and json.dumps(binding.get("description", "")) in line]
     if (binding["dispatcher"] != "__lua" or len(lines) != 1
             or 'hl.dsp.exec_cmd(' not in lines[0]
             or json.dumps(binding.get("description", "")) not in lines[0]):
@@ -82,6 +111,9 @@ def restore_binding(state):
         return
     if state.get("hyprland") != os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         raise RuntimeError("Restore Meta+N in the Hyprland session that started this test")
+    if state.get("outside_click"):
+        lua('if waynote_dev_outside_click then '
+            'waynote_dev_outside_click(); waynote_dev_outside_click = nil end')
     current = binds()
     # A compositor reload or user change wins over our saved binding.
     if not current or (len(current) == 1 and current[0].get("description") == DESCRIPTION):
@@ -95,19 +127,43 @@ def write_state(state):
     temporary.replace(STATE)
 
 
-def stop_orphan(state):
+def owned_child(state):
     pid = state.get("child_pid")
     if not pid:
-        return
+        return False
     try:
         cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+        if cmdline[0] != os.fsencode(REPO / "target/debug/waynote"):
+            return False
         environment = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
-        if (cmdline[0] == os.fsencode(REPO / "target/debug/waynote")
-                and b"WAYNOTE_DEV=1" in environment
-                and os.fsencode("XDG_DATA_HOME=" + str(WORK / "data")) in environment):
-            os.kill(pid, signal.SIGTERM)
+        return (b"WAYNOTE_DEV=1" in environment
+                and os.fsencode("XDG_DATA_HOME=" + str(WORK / "data")) in environment)
     except (FileNotFoundError, ProcessLookupError):
-        pass
+        return False
+    except PermissionError:
+        # The child can exit between the cmdline and environ reads. Only a
+        # proven dead process is safe to forget; keep live unreadable state.
+        try:
+            status = Path(f"/proc/{pid}/status").read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            return False
+        if any(line.startswith("State:") and line.split()[1] in {"Z", "X"}
+               for line in status.splitlines()):
+            return False
+        raise
+
+
+def quit_child(state):
+    # A stale PID must never start a fresh app merely to send it `quit`.
+    if not owned_child(state):
+        return
+    execute(str(REPO / "target/debug/waynote"), "quit", env=dev_env(), timeout=5)
+    # The CLI can succeed even when a save error makes the board reject quit.
+    deadline = time.monotonic() + 5
+    while owned_child(state):
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Development board kept running. Resolve its save error and retry scripts/dev stop.")
+        time.sleep(0.1)
 
 
 def read_state():
@@ -132,9 +188,12 @@ def stop():
         if STATE.exists():
             raise RuntimeError("Development session did not stop; inspect target/dev/app.log")
     elif state:
-        stop_orphan(state)
-        restore_binding(state)
-        STATE.unlink(missing_ok=True)
+        try:
+            quit_child(state)
+        finally:
+            restore_binding(state)
+            if not owned_child(state):
+                STATE.unlink(missing_ok=True)
 
 
 def run(take_binding):
@@ -148,6 +207,7 @@ def run(take_binding):
         if take_binding:
             config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "hypr" / "hyprland.lua"
             state["restore"] = original_binding(binds(), config)
+            state["outside_click"] = True
         child = None
         # Save recovery information before mutating a compositor binding.
         write_state(state)
@@ -162,43 +222,45 @@ def run(take_binding):
                                          start_new_session=True)
                 state["child_pid"] = child.pid
                 write_state(state)
+                float_window(state)
                 if take_binding:
                     command = shlex.join([str(REPO / "scripts" / "dev"), "toggle"])
                     lua('hl.unbind("SUPER + N"); '
                         f'hl.bind("SUPER + N", hl.dsp.exec_cmd({json.dumps(command)}), '
                         f'{{ description = {json.dumps(DESCRIPTION)} }})')
+                    preview_command = shlex.join([str(REPO / "scripts" / "dev"), "preview"])
+                    lua(f'waynote_dev_outside_click = dofile({json.dumps(str(REPO / "packaging/hyprland.lua"))})'
+                        f'({json.dumps(preview_command)}, {json.dumps(APP_CLASS)})')
                 print(f"Waynote DEV — data and logs: {WORK}\n"
-                      "Ctrl+C or scripts/dev stop ends this session.\n"
-                      "Current version: save edits with Esc before restarting.", flush=True)
+                      "Ctrl+C or scripts/dev stop ends this session.", flush=True)
                 if child.wait() != 0:
                     raise RuntimeError("Development app failed; inspect target/dev/app.log")
         except KeyboardInterrupt:
             pass
         finally:
-            if child is not None and child.poll() is None:
-                child.terminate()
-                try:
-                    child.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait()
-            restore_binding(state)
-            STATE.unlink(missing_ok=True)
+            try:
+                if child is not None and child.poll() is None:
+                    quit_child(state)
+            finally:
+                restore_binding(state)
+                if not owned_child(state):
+                    STATE.unlink(missing_ok=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", default="run",
                         choices=["run", "stop", "status", "check", "gui", "package",
-                                 "new", "toggle", "show-all", "hide-all"])
-    parser.add_argument("--bind", action="store_true", help="temporarily use Meta+N (Hyprland Lua)")
+                                 "new", "toggle", "show-all", "hide-all", "preview"])
+    parser.add_argument("--bind", action="store_true", help="temporarily use Meta+N and outside-click Preview (Hyprland Lua)")
     args = parser.parse_args()
     if args.command == "run":
         run(args.bind)
     elif args.command == "stop":
         stop()
     elif args.command == "status":
-        print("Running" if owned_process(read_state()) else "Stopped")
+        state = read_state()
+        print("Running" if owned_process(state) or owned_child(state) else "Stopped")
         print(f"Data and logs: {WORK}")
     elif args.command == "check":
         execute(sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_dev.py", cwd=REPO)
@@ -207,16 +269,25 @@ def main():
         execute("cargo", "clippy", "--locked", "--all-targets", cwd=REPO)
     elif args.command == "gui":
         execute(sys.executable, "scripts/gui-regressions.py", cwd=REPO)
+        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            lua(f'dofile({json.dumps(str(REPO / "scripts/test-hyprland.lua"))})'
+                f'({json.dumps(str(REPO / "packaging/hyprland.lua"))})')
     elif args.command == "package":
         execute("nix", "build", ".#default", "--no-link", "--print-out-paths", cwd=REPO)
     else:
-        if not owned_process(read_state()):
+        state = read_state()
+        if not owned_child(state):
             raise RuntimeError("Start scripts/dev run before sending development commands")
+        hyprland = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+        showing = args.command in ("new", "show-all") or (
+            args.command == "toggle" and hyprland and not dev_client(state))
         execute(str(REPO / "target" / "debug" / "waynote"), args.command, env=dev_env())
+        if showing:
+            float_window(state)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
         sys.exit(str(error))

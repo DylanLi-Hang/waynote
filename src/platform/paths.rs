@@ -1,7 +1,3 @@
-// Several Paths methods (attachments_dir, layout_file, config_file) are not yet
-// called from the binary. Suppress dead-code until they are wired up.
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
 /// Manages XDG-compliant paths for Waynote data, state, and config.
@@ -52,8 +48,7 @@ impl Paths {
     /// Path to the app trash directory: `<data>/waynote/trash`.
     ///
     /// Sits ALONGSIDE `notes/` (not inside it), so `load_all`/`rescan` — which
-    /// only scan `notes/` — never pick up trashed files. Spec §4.6 allows an app
-    /// trash dir; this is reliable across all wlr compositors (no D-Bus portal).
+    /// only scan `notes/` — never pick up trashed files. Deleted notes can be restored from this directory.
     pub fn trash_dir(&self) -> PathBuf {
         self.data.join("waynote").join("trash")
     }
@@ -63,27 +58,12 @@ impl Paths {
         self.state.join("waynote").join("layout.toml")
     }
 
-    /// Path to the app-managed runtime prefs: `<state>/waynote/runtime.toml`.
-    /// Holds UI toggles (e.g. confirm-before-delete) that the app/tray change —
-    /// kept OUT of the user's hand-editable config.toml.
-    pub fn runtime_prefs_file(&self) -> PathBuf {
-        self.state.join("waynote").join("runtime.toml")
-    }
-
     /// Path to the config file: `<config>/waynote/config.toml`
     pub fn config_file(&self) -> PathBuf {
         self.config.join("waynote").join("config.toml")
     }
 
-    /// The XDG data home root (`$XDG_DATA_HOME` or `~/.local/share`).
-    pub fn data_home(&self) -> PathBuf {
-        self.data.clone()
-    }
 
-    /// The XDG config home root (`$XDG_CONFIG_HOME` or `~/.config`).
-    pub fn config_home(&self) -> PathBuf {
-        self.config.clone()
-    }
 }
 
 /// Convenience function using the system environment.
@@ -197,14 +177,4 @@ mod tests {
         assert_eq!(paths.config_file(), PathBuf::from("/x/cfg/waynote/config.toml"));
     }
 
-    #[test]
-    fn data_and_config_home_expose_xdg_roots() {
-        let p = Paths::from_env(|k| match k {
-            "XDG_DATA_HOME" => Some("/d".into()),
-            "XDG_CONFIG_HOME" => Some("/c".into()),
-            _ => None,
-        });
-        assert_eq!(p.data_home(), PathBuf::from("/d"));
-        assert_eq!(p.config_home(), PathBuf::from("/c"));
-    }
 }

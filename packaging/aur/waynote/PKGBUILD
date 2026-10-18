@@ -2,12 +2,12 @@
 pkgname=waynote
 pkgver=0.1.6
 pkgrel=1
-pkgdesc="Wayland-native markdown sticky notes for tiling WMs (wlr-layer-shell)"
+pkgdesc="A single-window Markdown notes board for Linux"
 arch=('x86_64')
 url="https://github.com/mryll/waynote"
 license=('MIT')
 options=(!debug)
-depends=('gtk4' 'gtk4-layer-shell')
+depends=('gtk4')
 makedepends=('cargo')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('f0f212e0d84e2f900cdb22b17733cb5915eb4c2dcab9b90ed73246e60dc38bd8')

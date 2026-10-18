@@ -45,11 +45,6 @@ const ORANGE: Theme = Theme {
 pub const NOTE_COLORS: [&str; 7] =
     ["yellow", "green", "blue", "pink", "purple", "gray", "orange"];
 
-/// Whether `color` is one of the known palette colours.
-pub fn is_note_color(color: &str) -> bool {
-    NOTE_COLORS.contains(&color)
-}
-
 /// Return the colour tokens for `color`. Unknown names fall back to yellow.
 pub fn theme(color: &str) -> Theme {
     match color {

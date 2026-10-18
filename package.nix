@@ -4,7 +4,6 @@
   pkg-config,
   wrapGAppsHook4,
   gtk4,
-  gtk4-layer-shell,
 }:
 
 rustPlatform.buildRustPackage {
@@ -20,10 +19,10 @@ rustPlatform.buildRustPackage {
 
   buildInputs = [
     gtk4
-    gtk4-layer-shell
   ];
 
   postInstall = ''
+    install -Dm644 packaging/hyprland.lua $out/share/waynote/hyprland.lua
     install -Dm644 assets/waynote.svg \
       $out/share/icons/hicolor/scalable/apps/waynote.svg
     install -Dm644 packaging/waynote.desktop \

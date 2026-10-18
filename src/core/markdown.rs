@@ -1,8 +1,6 @@
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 
-// IR types — consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inline {
     Text(String),
@@ -16,7 +14,6 @@ pub enum Inline {
     HardBreak,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
     Heading { level: u8, inlines: Vec<Inline> },
@@ -24,6 +21,7 @@ pub enum Block {
     Code { lang: Option<String>, text: String },
     Quote(Vec<Block>),
     List(List),
+    Table(Table),
     ThematicBreak,
     /// A user-typed blank line preserved verbatim. CommonMark collapses runs of
     /// blank lines between blocks, but a sticky note is WYSIWYG, so each blank
@@ -32,7 +30,13 @@ pub enum Block {
     BlankLine,
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    pub alignments: Vec<Alignment>,
+    pub header: Vec<Vec<Inline>>,
+    pub rows: Vec<Vec<Vec<Inline>>>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct List {
     pub ordered: bool,
@@ -40,20 +44,18 @@ pub struct List {
     pub items: Vec<ListItem>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ListItem {
     pub task: Option<bool>,
     pub blocks: Vec<Block>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderDoc {
     pub blocks: Vec<Block>,
 }
 
-// ── Heading style (Task 2) ────────────────────────────────────────────────────
+// ── Heading style ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HeadingStyle {
@@ -80,19 +82,15 @@ const HEADING_STYLES: [HeadingStyle; 6] = [
 ];
 
 /// Per-level style; level is clamped to 1..=6.
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn heading_style(level: u8) -> HeadingStyle {
     let idx = level.clamp(1, 6) as usize - 1;
     HEADING_STYLES[idx]
 }
 
-// ── parse (Task 1) ────────────────────────────────────────────────────────────
+// ── parse ────────────────────────────────────────────────────────────
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn parse(md: &str) -> RenderDoc {
-    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     let events: Vec<_> = Parser::new_ext(md, opts).into_offset_iter().collect();
     let mut parser = ParseCtx { events, pos: 0, src: md };
     let blocks = parser.parse_blocks(true);
@@ -103,7 +101,6 @@ pub fn parse(md: &str) -> RenderDoc {
 
 // Events borrow from the input `md`; `parse()` folds them into owned-String IR
 // before returning, so the borrowed lifetime `'a` is sound (no transmute needed).
-#[allow(dead_code)]
 struct ParseCtx<'a> {
     events: Vec<(Event<'a>, std::ops::Range<usize>)>,
     pos: usize,
@@ -210,6 +207,10 @@ impl<'a> ParseCtx<'a> {
                 self.next();
                 Some(Block::List(List { ordered, start, items }))
             }
+            Event::Start(Tag::Table(alignments)) => {
+                let alignments = alignments.clone();
+                Some(Block::Table(self.parse_table(alignments)))
+            }
             Event::Rule => {
                 self.next();
                 Some(Block::ThematicBreak)
@@ -289,6 +290,33 @@ impl<'a> ParseCtx<'a> {
             }
         }
         Some(Block::Code { lang, text })
+    }
+
+    fn parse_table(&mut self, alignments: Vec<Alignment>) -> Table {
+        self.next();
+        let mut table = Table { alignments, header: Vec::new(), rows: Vec::new() };
+        loop {
+            match self.peek() {
+                Some(Event::Start(Tag::TableHead | Tag::TableRow)) => {
+                    let is_header = matches!(self.peek(), Some(Event::Start(Tag::TableHead)));
+                    self.next();
+                    let mut cells = Vec::new();
+                    while matches!(self.peek(), Some(Event::Start(Tag::TableCell))) {
+                        self.next();
+                        cells.push(self.parse_inlines());
+                        self.next();
+                    }
+                    self.next();
+                    if is_header { table.header = cells; } else { table.rows.push(cells); }
+                }
+                Some(Event::End(TagEnd::Table)) | None => {
+                    self.next();
+                    break;
+                }
+                _ => { self.next(); }
+            }
+        }
+        table
     }
 
     fn parse_list_items(&mut self) -> Vec<ListItem> {
@@ -395,7 +423,6 @@ impl<'a> ParseCtx<'a> {
     }
 }
 
-#[allow(dead_code)]
 fn collect_text_until_end(
     events: &[(Event<'_>, std::ops::Range<usize>)],
     start: usize,
@@ -415,7 +442,6 @@ fn collect_text_until_end(
     text
 }
 
-#[allow(dead_code)]
 fn skip_until_end(
     pos: &mut usize,
     events: &[(Event<'_>, std::ops::Range<usize>)],
@@ -435,17 +461,9 @@ fn skip_until_end(
     }
 }
 
-// ── Task 3: toggle_task / task_count ─────────────────────────────────────────
-
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
-pub fn task_count(raw: &str) -> usize {
-    collect_task_ranges(raw).len()
-}
+// ── toggle_task ─────────────────────────────────────────
 
 /// Flip the (0-based) Nth GFM task checkbox in `raw`.
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn toggle_task(raw: &str, index: usize) -> String {
     let ranges = collect_task_ranges(raw);
     let Some(range) = ranges.get(index) else {
@@ -458,7 +476,7 @@ pub fn toggle_task(raw: &str, index: usize) -> String {
 }
 
 fn collect_task_ranges(raw: &str) -> Vec<std::ops::Range<usize>> {
-    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
+    let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
     Parser::new_ext(raw, opts)
         .into_offset_iter()
         .filter_map(|(e, r)| matches!(e, Event::TaskListMarker(_)).then_some(r))
@@ -488,9 +506,8 @@ fn flip_checkbox(raw: &str, pos: usize) -> String {
     String::from_utf8(bytes).expect("ASCII checkbox-byte replacement preserves UTF-8")
 }
 
-// ── Task 4: link/image classification ────────────────────────────────────────
+// ── link/image classification ────────────────────────────────────────
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum ImageSrc {
     LocalRelative(String),
@@ -499,8 +516,6 @@ pub enum ImageSrc {
     Unsupported,
 }
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn classify_image(dest: &str) -> ImageSrc {
     if dest.starts_with("https://") || dest.starts_with("http://") {
         return ImageSrc::Remote;
@@ -514,13 +529,11 @@ pub fn classify_image(dest: &str) -> ImageSrc {
     ImageSrc::LocalRelative(dest.to_string())
 }
 
-// consumed by the GTK renderer (Plan 4 display tasks) / Plan 5
-#[allow(dead_code)]
 pub fn is_web_link(href: &str) -> bool {
     href.starts_with("https://") || href.starts_with("http://") || href.starts_with("mailto:")
 }
 
-// ── Tests (Task 1) ────────────────────────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -806,6 +819,40 @@ mod tests {
     }
 
     #[test]
+    fn pipe_table_preserves_alignment_and_inline_formatting() {
+        let raw = "| Name | Detail | Count | Other |\n| :--- | :---: | ---: | --- |\n| **中文** | *text* and `code` | [link](https://example.com) | ~~old~~ |\n";
+        let doc = parse(raw);
+        let [Block::Table(table)] = doc.blocks.as_slice() else { panic!("expected table") };
+        assert_eq!(table.alignments, vec![Alignment::Left, Alignment::Center, Alignment::Right, Alignment::None]);
+        assert_eq!(table.header[0], vec![Inline::Text("Name".into())]);
+        assert_eq!(table.rows[0][0], vec![Inline::Strong(vec![Inline::Text("中文".into())])]);
+        assert_eq!(table.rows[0][1], vec![Inline::Emphasis(vec![Inline::Text("text".into())]), Inline::Text(" and ".into()), Inline::Code("code".into())]);
+        assert_eq!(table.rows[0][2], vec![Inline::Link { href: "https://example.com".into(), children: vec![Inline::Text("link".into())] }]);
+        assert_eq!(table.rows[0][3], vec![Inline::Strikethrough(vec![Inline::Text("old".into())])]);
+    }
+
+    #[test]
+    fn pipe_table_keeps_empty_cells_and_escaped_pipes() {
+        let doc = parse("| A | B | C |\n| --- | --- | --- |\n| left\\|right | | `a\\|b` |\n| short |\n");
+        let [Block::Table(table)] = doc.blocks.as_slice() else { panic!("expected table") };
+        assert_eq!(table.rows[0][0].iter().filter_map(|i| match i { Inline::Text(t) => Some(t.as_str()), _ => None }).collect::<String>(), "left|right");
+        assert!(table.rows[0][1].is_empty());
+        assert_eq!(table.rows[0][2], vec![Inline::Code("a|b".into())]);
+        assert_eq!(table.rows[1].len(), 3);
+        assert!(table.rows[1][1].is_empty());
+        assert!(table.rows[1][2].is_empty());
+    }
+
+    #[test]
+    fn table_does_not_consume_following_blocks_or_change_task_offsets() {
+        let raw = "| A | B |\n| --- | --- |\n| x | y |\n\n- [ ] 中文任务\n";
+        let doc = parse(raw);
+        assert!(matches!(&doc.blocks[0], Block::Table(_)));
+        assert!(matches!(&doc.blocks[1], Block::List(_)));
+        assert_eq!(toggle_task(raw, 0), raw.replace("[ ]", "[x]"));
+    }
+
+    #[test]
     fn thematic_break() {
         let doc = parse("text\n\n---\n");
         assert!(doc.blocks.contains(&Block::ThematicBreak));
@@ -835,6 +882,10 @@ mod tests {
                 .iter()
                 .flat_map(|it| &it.blocks)
                 .any(block_has_angle_bracket),
+            Block::Table(table) => table.header.iter()
+                .chain(table.rows.iter().flatten())
+                .flatten()
+                .any(inline_has_angle_bracket),
             Block::ThematicBreak | Block::BlankLine => false,
         }
     }
@@ -848,7 +899,7 @@ mod tests {
         assert!(!leaks, "raw HTML must not leak into IR: {:?}", doc.blocks);
     }
 
-    // ── Task 2: heading style table ───────────────────────────────────────────
+    // ── heading style table ───────────────────────────────────────────
 
     #[test]
     fn heading_scales_strictly_decreasing() {
@@ -912,7 +963,7 @@ mod tests {
         assert_eq!(heading_style(9), heading_style(6));
     }
 
-    // ── Task 3: toggle_task / task_count ──────────────────────────────────────
+    // ── toggle_task ──────────────────────────────────────
 
     #[test]
     fn toggle_task_0_unchecked_to_checked() {
@@ -944,12 +995,6 @@ mod tests {
     }
 
     #[test]
-    fn task_count_excludes_code_block() {
-        let md = "- [ ] real\n\n```\n- [ ] fake\n```\n";
-        assert_eq!(task_count(md), 1, "code block [ ] must not be counted");
-    }
-
-    #[test]
     fn toggle_task_code_block_excluded_real_toggled() {
         let md = "- [ ] real\n\n```\n- [ ] fake\n```\n";
         let result = toggle_task(md, 0);
@@ -974,17 +1019,7 @@ mod tests {
         assert_eq!(toggle_task(&result, 0), md);
     }
 
-    #[test]
-    fn task_count_zero() {
-        assert_eq!(task_count("no tasks here"), 0);
-    }
-
-    #[test]
-    fn task_count_two() {
-        assert_eq!(task_count("- [ ] a\n- [x] b\n"), 2);
-    }
-
-    // ── Task 4: link/image classification ────────────────────────────────────
+    // ── link/image classification ────────────────────────────────────
 
     #[test]
     fn classify_image_local_relative() {

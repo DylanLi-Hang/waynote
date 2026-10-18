@@ -8,9 +8,6 @@ use crate::core::id_policy::{IdGen, RawId, resolve};
 use crate::core::note::Note;
 use crate::platform::paths::Paths;
 
-/// Geometry keys that belong in the layout file, not in the note's frontmatter.
-const GEOMETRY_KEYS: &[&str] = &["x", "y", "w", "h", "output", "output_desc", "logical"];
-
 /// A note that has been loaded from disk, with its resolved path and content hash.
 pub struct LoadedNote {
     pub path: PathBuf,
@@ -61,18 +58,13 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
     // Sort for deterministic ordering.
     files.sort_by(|a, b| a.0.cmp(&b.0));
 
-    // Parse all files and strip geometry keys from extra.
+    // Preserve unrecognized frontmatter as inert metadata.
     let notes: Vec<Note> = files
         .iter()
-        .map(|(_, c, _)| strip_geometry(frontmatter::parse(c)))
+        .map(|(_, c, _)| frontmatter::parse(c))
         .collect();
 
     // Build RawId slice — borrow from local strings to satisfy lifetimes.
-    let path_keys: Vec<String> = files
-        .iter()
-        .map(|(p, _, _)| p.to_str().unwrap_or("").to_string())
-        .collect();
-    let fm_ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
     let filename_ids: Vec<Option<String>> = files
         .iter()
         .map(|(p, _, _)| {
@@ -85,8 +77,7 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
 
     let raw_ids: Vec<RawId> = (0..files.len())
         .map(|i| RawId {
-            path_key: &path_keys[i],
-            fm_id: &fm_ids[i],
+            fm_id: &notes[i].id,
             filename_id: filename_ids[i].as_deref(),
         })
         .collect();
@@ -139,14 +130,6 @@ pub fn load_all(paths: &Paths, gen: &mut impl IdGen) -> std::io::Result<Vec<Load
     Ok(results)
 }
 
-/// Strip layout-only geometry keys from a note's extra map.
-fn strip_geometry(mut note: Note) -> Note {
-    for key in GEOMETRY_KEYS {
-        note.extra.remove(*key);
-    }
-    note
-}
-
 /// Extract the potential id prefix from a filename `<id>-<slug>.md` or `<id>.md`.
 ///
 /// Returns the segment before the first `-`, or the full stem if no `-` present.
@@ -181,10 +164,10 @@ fn read_hash_if_exists(path: &Path) -> std::io::Result<Option<String>> {
 /// Returns `true` when the on-disk state differs from what the caller expected.
 ///
 /// `base_hash == ""` asserts absence: any present file is a conflict. Otherwise
-/// a present file whose hash differs from `base_hash` is a conflict.
+/// both a missing file and a changed hash indicate an external change.
 fn is_conflict(base_hash: &str, disk_hash: &Option<String>) -> bool {
     let Some(h) = disk_hash else {
-        return false;
+        return !base_hash.is_empty();
     };
     if base_hash.is_empty() {
         return true;
@@ -202,7 +185,7 @@ pub fn save_to(target: &Path, note: &Note) -> std::io::Result<String> {
 
 /// Path-aware optimistic-concurrency save: writes to `target` if the on-disk
 /// file at `target` still hashes to `base_hash`; otherwise writes a conflict
-/// copy next to `target` (`<stem>.conflict-<ts>.md`) and returns `Conflict`.
+/// copy next to `target` (`<stem>.conflict-<ts>-<id>.md`) and returns `Conflict`.
 /// `base_hash == ""` asserts the target does not yet exist (present file → Conflict).
 pub fn save_checked_to(
     target: &Path,
@@ -220,12 +203,16 @@ pub fn save_checked_to(
     Ok(SaveOutcome::Saved(content_hash(&bytes)))
 }
 
-/// Write a conflict copy alongside `target`: `<stem>.conflict-<ts>.md`.
+/// A conflict copy is a distinct note. Give it a fresh id before a watcher can
+/// discover it, preserving the original's identity during the next load. The
+/// id in the filename also prevents repeated timestamps from overwriting drafts.
 fn write_conflict_next_to(target: &Path, note: &Note, ts: &str) -> std::io::Result<PathBuf> {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let stem = target.file_stem().and_then(|s| s.to_str()).unwrap_or("note");
-    let conflict_path = parent.join(format!("{stem}.conflict-{ts}.md"));
-    let bytes = frontmatter::serialize(note).into_bytes();
+    let mut copy = note.clone();
+    copy.id = ulid::Ulid::new().to_string();
+    let conflict_path = parent.join(format!("{stem}.conflict-{ts}-{}.md", copy.id));
+    let bytes = frontmatter::serialize(&copy).into_bytes();
     atomic_write(&conflict_path, &bytes)?;
     Ok(conflict_path)
 }
@@ -270,7 +257,7 @@ pub fn atomic_write(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::core::id_policy::IdGen;
-    use crate::core::note::{Layer, Note};
+    use crate::core::note::Note;
     use crate::platform::paths::Paths;
     use std::collections::BTreeMap;
 
@@ -306,9 +293,7 @@ mod tests {
         Note {
             id: id.to_string(),
             color: "blue".to_string(),
-            pinned: true,
             locked: false,
-            layer: Layer::Desktop,
             tags: vec!["inbox".to_string(), "work".to_string()],
             extra,
             body: "# My Note\nsome body\n".to_string(),
@@ -343,7 +328,7 @@ mod tests {
         fs::create_dir_all(&notes_dir).unwrap();
 
         // File with empty id in frontmatter.
-        let content = "---\nid: \"\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# No Id\n";
+        let content = "---\nid: \"\"\ncolor: yellow\ntags: []\n---\n# No Id\n";
         fs::write(notes_dir.join("no-id.md"), content).unwrap();
 
         let mut gen = SeqIdGen::new();
@@ -391,7 +376,7 @@ mod tests {
         // Write a file manually with a valid ULID in both filename and frontmatter,
         // but with non-canonical YAML formatting (extra spaces, non-standard key order).
         // Re-serializing this note would produce different bytes.
-        let non_canonical = "---\nid:   \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor:  \"yellow\"\npinned:  false\nlayer:  \"front\"\ntags:  []\n---\n# Non-canonical\n";
+        let non_canonical = "---\nid:   \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor:  \"yellow\"\ntags:  []\n---\n# Non-canonical\n";
         let filename = format!("{}-non-canonical.md", VALID_ID);
         fs::write(notes_dir.join(&filename), non_canonical).unwrap();
 
@@ -426,7 +411,7 @@ mod tests {
         fs::create_dir_all(&notes_dir).unwrap();
 
         // File with missing id — load_all will assign one and rename it.
-        let content = "---\nid: \"\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# Rename Test\n";
+        let content = "---\nid: \"\"\ncolor: yellow\ntags: []\n---\n# Rename Test\n";
         fs::write(notes_dir.join("no-id.md"), content).unwrap();
 
         let mut gen = SeqIdGen::new();
@@ -482,7 +467,7 @@ mod tests {
 
         let id = "01HZX5K3P8QR7V9WMN2T4Y6BCD"; // valid ULID
         let content = format!(
-            "---\nid: {id}\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# New Title\n"
+            "---\nid: {id}\ncolor: yellow\ntags: []\n---\n# New Title\n"
         );
         let old_name = format!("{id}-old-slug.md");
         fs::write(notes_dir.join(&old_name), &content).unwrap();
@@ -560,7 +545,7 @@ mod tests {
         let base = save_to(&target, &note).unwrap();
 
         // External edit on disk.
-        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# External\n").unwrap();
+        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\ntags: []\n---\n# External\n").unwrap();
 
         let mut in_mem = make_note(VALID_ID);
         in_mem.body = "# Frozen\nin-memory body\n".to_string();
@@ -586,7 +571,7 @@ mod tests {
         let base = save_to(&target, &note).unwrap();
 
         // External edit to force conflict.
-        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\n---\n# External\n").unwrap();
+        fs::write(&target, "---\nid: \"01JZ9P6S0R8ZX0G8N3Z4V7Y8QK\"\ncolor: yellow\ntags: []\n---\n# External\n").unwrap();
 
         let mut in_mem = make_note(VALID_ID);
         in_mem.body = "# Changed Title\nbody\n".to_string();
@@ -608,6 +593,60 @@ mod tests {
     }
 
     #[test]
+    fn conflict_copies_keep_distinct_ids_and_original_identity_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = make_paths(dir.path().to_str().unwrap());
+        fs::create_dir_all(paths.notes_dir()).unwrap();
+        let target = paths.notes_dir().join(format!("{VALID_ID}-frozen.md"));
+        let mut note = make_note(VALID_ID);
+        let base = save_to(&target, &note).unwrap();
+        let mut external = note.clone();
+        external.body = "External edit".into();
+        save_to(&target, &external).unwrap();
+        let mut copies = Vec::new();
+        for body in ["First draft", "Second draft"] {
+            note.body = body.into();
+            let outcome = save_checked_to(&target, &note, &base, "same-timestamp").unwrap();
+            let SaveOutcome::Conflict(path) = outcome else { panic!("expected conflict") };
+            let copy = frontmatter::parse(&fs::read_to_string(&path).unwrap());
+            assert_ne!(copy.id, VALID_ID);
+            assert_eq!(copy.body, body);
+            assert_eq!(copy.extra, note.extra);
+            copies.push(path);
+        }
+        assert_ne!(copies[0], copies[1], "Repeated timestamps cannot overwrite earlier drafts");
+        let loaded = load_all(&paths, &mut SeqIdGen::new()).unwrap();
+        assert_eq!(loaded.len(), 3);
+        let original = loaded.iter().find(|n| n.path == target).unwrap();
+        assert_eq!(original.note.id, VALID_ID);
+        assert_eq!(original.note.body, "External edit");
+        assert_eq!(loaded.iter().filter(|n| n.note.id == VALID_ID).count(), 1);
+        for copy in copies { assert!(loaded.iter().any(|n| n.path == copy)); }
+    }
+
+    #[test]
+    fn external_delete_or_rename_does_not_recreate_a_previously_loaded_path() {
+        for rename in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join(format!("{VALID_ID}-frozen.md"));
+            let renamed = dir.path().join(format!("{VALID_ID}-renamed.md"));
+            let mut note = make_note(VALID_ID);
+            let base = save_to(&target, &note).unwrap();
+            let original = fs::read(&target).unwrap();
+            if rename { fs::rename(&target, &renamed).unwrap(); }
+            else { fs::remove_file(&target).unwrap(); }
+            note.body = "Latest local draft".into();
+            let outcome = save_checked_to(&target, &note, &base, "after-external-change").unwrap();
+            let SaveOutcome::Conflict(copy) = outcome else { panic!("expected conflict") };
+            assert!(!target.exists(), "Saving must not silently undo an external delete or rename");
+            let recovery = frontmatter::parse(&fs::read_to_string(copy).unwrap());
+            assert_eq!(recovery.body, "Latest local draft");
+            assert_ne!(recovery.id, note.id);
+            if rename { assert_eq!(fs::read(&renamed).unwrap(), original); }
+        }
+    }
+
+    #[test]
     fn save_checked_to_missing_target_with_empty_base_hash_returns_saved() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join(format!("{VALID_ID}-frozen.md"));
@@ -619,27 +658,27 @@ mod tests {
     }
 
     #[test]
-    fn geometry_keys_absent_from_loaded_note_extra() {
+    fn loading_and_saving_preserves_legacy_metadata_without_runtime_fields() {
         let dir = tempfile::tempdir().unwrap();
         let paths = make_paths(dir.path().to_str().unwrap());
         let notes_dir = paths.notes_dir();
         fs::create_dir_all(&notes_dir).unwrap();
 
-        // File with every layout/geometry key in frontmatter (as might come from an
-        // external editor or an older write). None of these belong in the `.md`.
-        let content = "---\nid: \"\"\ncolor: yellow\npinned: false\nlayer: front\ntags: []\nx: 100\ny: 200\nw: 300\nh: 400\noutput: HDMI-1\noutput_desc: Some Monitor\nlogical: [0, 0, 1920, 1080]\n---\n# Geo Test\n";
+        // Removed features use the same unknown-field path as custom metadata.
+        let content = "---\nid: \"\"\ncolor: yellow\npinned: true\nlayer: desktop\ntags: []\nx: 100\ny: 200\nw: 300\nh: 400\noutput: HDMI-1\noutput_desc: Some Monitor\nlogical: [0, 0, 1920, 1080]\n---\n# Geo Test\n";
         fs::write(notes_dir.join("geo-test.md"), content).unwrap();
 
         let mut gen = SeqIdGen::new();
         let loaded = load_all(&paths, &mut gen).unwrap();
         assert_eq!(loaded.len(), 1);
-        let extra = &loaded[0].note.extra;
-
-        for key in &["x", "y", "w", "h", "output", "output_desc", "logical"] {
-            assert!(
-                !extra.contains_key(*key),
-                "geometry key '{key}' must not be in note.extra after load"
-            );
-        }
+        let note = &loaded[0].note;
+        assert_eq!(note.body, "# Geo Test\n");
+        let original = frontmatter::parse(content);
+        assert_eq!(note.extra, original.extra);
+        save_to(&loaded[0].path, note).unwrap();
+        let restored = frontmatter::parse(&fs::read_to_string(&loaded[0].path).unwrap());
+        assert_eq!(restored.extra, original.extra);
+        assert_eq!(restored.body, original.body);
+        assert_eq!(restored.id, note.id);
     }
 }

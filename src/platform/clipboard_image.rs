@@ -96,7 +96,7 @@ pub fn store_pasted_image(
 /// Without this step, the stored PNG would have R and B swapped.
 ///
 /// Display-bound — cannot be unit-tested headless. Verified manually (see plan
-/// Task 2 Step 9).
+/// image processing).
 pub fn texture_to_raw(texture: &gtk::gdk::Texture) -> RawImage {
     use gtk::prelude::{TextureExt, TextureExtManual};
     let w = texture.width() as u32;

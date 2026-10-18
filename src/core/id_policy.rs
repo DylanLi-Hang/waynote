@@ -2,16 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 /// A loaded-but-unresolved note file.
 pub struct RawId<'a> {
-    pub path_key: &'a str,
     pub fm_id: &'a str,
     pub filename_id: Option<&'a str>,
 }
 
 /// Outcome per file: keep the existing id, or assign a freshly generated one.
 pub struct Resolved {
-    // read by tests / future callers to map results to input files
-    #[allow(dead_code)]
-    pub path_key: String,
     pub id: String,
     pub assigned: bool,
 }
@@ -22,8 +18,6 @@ pub trait IdGen {
 }
 
 /// Production id generator using `ulid::Ulid::new`.
-// constructed when the binary wires persistence (later plan)
-#[allow(dead_code)]
 pub struct UlidGen;
 
 impl IdGen for UlidGen {
@@ -83,9 +77,9 @@ fn build_resolved(
     let winner_indices: HashSet<usize> = winner_by_id.values().copied().collect();
     raws.iter().enumerate().map(|(i, raw)| {
         if winner_indices.contains(&i) {
-            Resolved { path_key: raw.path_key.to_string(), id: raw.fm_id.to_string(), assigned: false }
+            Resolved { id: raw.fm_id.to_string(), assigned: false }
         } else {
-            Resolved { path_key: raw.path_key.to_string(), id: gen.new_id(), assigned: true }
+            Resolved { id: gen.new_id(), assigned: true }
         }
     }).collect()
 }
@@ -133,7 +127,7 @@ mod tests {
 
     #[test]
     fn valid_unique_fm_id_is_kept() {
-        let raws = [RawId { path_key: "a.md", fm_id: ID_A, filename_id: Some(ID_A) }];
+        let raws = [RawId { fm_id: ID_A, filename_id: Some(ID_A) }];
         let mut gen = SeqIdGen::new();
         let resolved = resolve(&raws, &mut gen);
         assert_eq!(resolved[0].id, ID_A);
@@ -142,7 +136,7 @@ mod tests {
 
     #[test]
     fn empty_fm_id_gets_new_assigned_id() {
-        let raws = [RawId { path_key: "a.md", fm_id: "", filename_id: None }];
+        let raws = [RawId { fm_id: "", filename_id: None }];
         let mut gen = SeqIdGen::new();
         let resolved = resolve(&raws, &mut gen);
         assert_eq!(resolved[0].id, "GEN1");
@@ -152,7 +146,7 @@ mod tests {
     #[test]
     fn invalid_fm_id_gets_new_assigned_id() {
         // "nope" is not a valid ULID (wrong length, wrong charset) → assign new.
-        let raws = [RawId { path_key: "a.md", fm_id: "nope", filename_id: None }];
+        let raws = [RawId { fm_id: "nope", filename_id: None }];
         let mut gen = SeqIdGen::new();
         let resolved = resolve(&raws, &mut gen);
         assert!(resolved[0].assigned);
@@ -161,13 +155,13 @@ mod tests {
     #[test]
     fn duplicate_fm_id_filename_match_wins() {
         let raws = [
-            RawId { path_key: "a.md", fm_id: ID_A, filename_id: Some(ID_A) },
-            RawId { path_key: "b.md", fm_id: ID_A, filename_id: Some(ID_B) },
+            RawId { fm_id: ID_A, filename_id: Some(ID_A) },
+            RawId { fm_id: ID_A, filename_id: Some(ID_B) },
         ];
         let mut gen = SeqIdGen::new();
         let resolved = resolve(&raws, &mut gen);
-        let a = resolved.iter().find(|r| r.path_key == "a.md").unwrap();
-        let b = resolved.iter().find(|r| r.path_key == "b.md").unwrap();
+        let a = &resolved[0];
+        let b = &resolved[1];
         assert_eq!(a.id, ID_A);
         assert!(!a.assigned);
         assert_eq!(b.id, "GEN1");
@@ -178,13 +172,13 @@ mod tests {
     fn duplicate_fm_id_no_filename_match_first_in_order_wins() {
         // Neither filename matches the id; first in input order keeps it.
         let raws = [
-            RawId { path_key: "a.md", fm_id: ID_A, filename_id: Some(ID_B) },
-            RawId { path_key: "b.md", fm_id: ID_A, filename_id: None },
+            RawId { fm_id: ID_A, filename_id: Some(ID_B) },
+            RawId { fm_id: ID_A, filename_id: None },
         ];
         let mut gen = SeqIdGen::new();
         let resolved = resolve(&raws, &mut gen);
-        let a = resolved.iter().find(|r| r.path_key == "a.md").unwrap();
-        let b = resolved.iter().find(|r| r.path_key == "b.md").unwrap();
+        let a = &resolved[0];
+        let b = &resolved[1];
         assert_eq!(a.id, ID_A);
         assert!(!a.assigned);
         assert_eq!(b.id, "GEN1");
