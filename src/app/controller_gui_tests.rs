@@ -52,8 +52,30 @@ fn selector_button(board: &Controller, title: &str) -> gtk::Button {
             .unwrap()
             .downcast::<gtk::Button>()
             .unwrap();
-        let label = button.label().unwrap();
-        if label.lines().next().unwrap().trim_start_matches("✓ ") == title {
+        let content = button.child().unwrap().downcast::<gtk::Box>().unwrap();
+        let text = content
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Box>()
+            .unwrap();
+        let label = text
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::Label>()
+            .unwrap();
+        if label.text() == title {
+            assert_eq!(label.xalign(), 0.0);
+            let snippet = label
+                .next_sibling()
+                .unwrap()
+                .downcast::<gtk::Label>()
+                .unwrap();
+            assert_eq!(snippet.xalign(), 0.0);
+            assert_ne!(
+                snippet.text(),
+                label.text(),
+                "Summary must not repeat the title"
+            );
             return button;
         }
         row = widget.next_sibling();
@@ -253,6 +275,16 @@ fn board_gui_regressions() {
     let second = this.borrow().active.clone().unwrap();
     assert_selected(&this.borrow(), &second);
     let select_first = selector_button(&this.borrow(), "Uncommitted newest content");
+    let summary = select_first
+        .child()
+        .unwrap()
+        .first_child()
+        .unwrap()
+        .last_child()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert_eq!(summary.text(), "No additional text");
     select_first.emit_clicked();
     pump();
     assert_selected(&this.borrow(), &first);
@@ -282,10 +314,7 @@ fn board_gui_regressions() {
     assert!(this.borrow().cards[&first]
         .root
         .has_css_class("waynote-active"));
-    assert!(selector_button(&this.borrow(), "- [ ] Locked task")
-        .label()
-        .unwrap()
-        .starts_with("✓ "));
+    assert!(selector_button(&this.borrow(), "- [ ] Locked task").has_css_class("waynote-selected"));
 
     // Many notes exercise the selector without displaying a card grid.
     let (source, destination) = {
@@ -313,6 +342,21 @@ fn board_gui_regressions() {
     let menu = this.borrow().cards[&source].menu.clone();
     menu.popup();
     pump();
+    let long_title = "很长的中文标题与 English title ".repeat(8);
+    {
+        let mut board = this.borrow_mut();
+        board
+            .insert_note(Note {
+                id: ulid::Ulid::new().to_string(),
+                color: "blue".into(),
+                locked: false,
+                tags: vec![],
+                extra: BTreeMap::new(),
+                body: format!("# {long_title}\n{}", "正文摘要与 long content ".repeat(12)),
+            })
+            .unwrap();
+        board.select(&source);
+    }
     let (notes, search) = {
         let board = this.borrow();
         (board.selector_popover.clone(), board.search.clone())
@@ -325,6 +369,15 @@ fn board_gui_regressions() {
         gtk::prelude::GtkWindowExt::focus(&this.borrow().window)
             .is_some_and(|focus| focus.is_ancestor(&search)),
         "Closing a card menu must not steal Notes search focus"
+    );
+    let long_option = selector_button(&this.borrow(), long_title.trim());
+    assert!(
+        notes.width() <= 360,
+        "Long text must not widen the panel beyond the note"
+    );
+    assert!(
+        long_option.height() < 80,
+        "Long text must stay in a compact two-line row"
     );
     notes.popdown();
     Controller::edit(&this, &source, None);
@@ -366,10 +419,7 @@ fn board_gui_regressions() {
     assert!(!this.borrow().cards[&source]
         .root
         .has_css_class("waynote-active"));
-    assert!(selector_button(&this.borrow(), "Distant 11")
-        .label()
-        .unwrap()
-        .starts_with("✓ "));
+    assert!(selector_button(&this.borrow(), "Distant 11").has_css_class("waynote-selected"));
     this.borrow_mut().cards.get_mut(&first).unwrap().note.locked = false;
     Controller::edit(&this, &first, None);
     pump();

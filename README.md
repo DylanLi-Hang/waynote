@@ -7,6 +7,7 @@ A lightweight Markdown sticky note for Linux, forked from
   including when another app has focus. It stays running while hidden.
 - The header's **Notes** button opens a searchable selection panel. One note is
   visible at a time; switching saves the current draft and opens the selected note in Preview.
+  Each entry shows a left-aligned title and a separate body summary; long text is ellipsized.
   **＋** creates and selects a note, ready to type.
 - Click an unlocked note to edit its Markdown. Mouse movement and window focus
   changes keep Edit active. Click the paper's title or press Esc to save and

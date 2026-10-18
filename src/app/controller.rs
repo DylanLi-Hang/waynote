@@ -132,7 +132,9 @@ impl Controller {
             .build();
         let selector = gtk::ListBox::new();
         selector.set_selection_mode(gtk::SelectionMode::None);
+        selector.add_css_class("waynote-note-list");
         let choices = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        choices.set_width_request(284);
         choices.set_margin_top(10);
         choices.set_margin_bottom(10);
         choices.set_margin_start(10);
@@ -140,8 +142,8 @@ impl Controller {
         choices.append(&search);
         choices.append(
             &gtk::ScrolledWindow::builder()
-                .min_content_width(280)
-                .max_content_height(380)
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .max_content_height(320)
                 .propagate_natural_height(true)
                 .child(&selector)
                 .build(),
@@ -150,6 +152,7 @@ impl Controller {
             .child(&choices)
             .halign(gtk::Align::Start)
             .build();
+        selector_popover.add_css_class("waynote-selector");
         new.add_css_class("waynote-control");
         empty.append(&new);
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -917,21 +920,39 @@ impl Controller {
                 continue;
             }
             let title = card.note.title();
-            let snippet: String = card
-                .raw()
+            let raw = card.raw();
+            let snippet = raw
                 .lines()
-                .find(|line| !line.trim().is_empty() && !line.starts_with('#'))
-                .unwrap_or("Empty note")
-                .chars()
-                .take(60)
-                .collect();
-            let selected = if self.active.as_deref() == Some(id) {
-                "✓ "
-            } else {
-                ""
-            };
-            let item = gtk::Button::with_label(&format!("{selected}{title}\n{snippet}"));
-            item.set_tooltip_text(Some(&card.raw()));
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with('#') && *line != title)
+                .unwrap_or("No additional text");
+            let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            text.set_hexpand(true);
+            for (value, class) in [
+                (title.as_str(), "waynote-note-title"),
+                (snippet, "waynote-note-snippet"),
+            ] {
+                let label = gtk::Label::builder()
+                    .label(value)
+                    .xalign(0.0)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .max_width_chars(28)
+                    .build();
+                label.add_css_class(class);
+                text.append(&label);
+            }
+            let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            content.append(&text);
+            let selected = self.active.as_deref() == Some(id);
+            let check = gtk::Image::from_icon_name("object-select-symbolic");
+            check.set_opacity(if selected { 1.0 } else { 0.0 });
+            content.append(&check);
+            let item = gtk::Button::builder().child(&content).build();
+            item.add_css_class("waynote-note-option");
+            if selected {
+                item.add_css_class("waynote-selected");
+            }
+            item.set_tooltip_text(Some(&raw));
             let weak = self.weak.clone();
             let id = id.clone();
             item.connect_clicked(move |_| {

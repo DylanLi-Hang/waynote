@@ -152,6 +152,29 @@ const CARD_CSS: &str = "
     background: rgba(64,58,40,0.08);
 }
 .waynote-control > button:hover image, .waynote-control > button:checked image, button.waynote-control:hover image { opacity: 1; }
+.waynote-selector > contents {
+    background: #fffdf7;
+    color: #39362f;
+    border: 1px solid rgba(64,58,40,0.18);
+    border-radius: 12px;
+    padding: 2px;
+}
+.waynote-note-list, .waynote-note-list > row { background: transparent; padding: 0; }
+.waynote-note-option {
+    padding: 10px 12px;
+    margin: 2px 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+    color: #39362f;
+}
+.waynote-note-option:hover { background: rgba(64,58,40,0.06); }
+.waynote-note-option.waynote-selected { background: rgba(64,58,40,0.09); }
+.waynote-note-title { font-size: 13px; font-weight: 600; }
+.waynote-note-snippet { font-size: 12px; color: #777167; }
+.waynote-note-option image { color: #777167; -gtk-icon-size: 16px; }
 .waynote-color-palette { padding: 8px; }
 .waynote-swatch {
     min-width: 22px;
