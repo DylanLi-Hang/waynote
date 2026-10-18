@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+case "${1:-run}" in
+  stop|status|new|toggle|show-all|hide-all) exec python3 "$repo/scripts/dev.py" "$@" ;;
+esac
+if [[ ${WAYNOTE_DEV_SHELL:-} != 1 ]]; then
+  exec nix develop "$repo" --command env WAYNOTE_DEV_SHELL=1 bash "$repo/scripts/dev" "$@"
+fi
+exec python3 "$repo/scripts/dev.py" "$@"

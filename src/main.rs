@@ -190,8 +190,15 @@ fn main() -> glib::ExitCode {
 fn run_app(cmd: AppCommand) -> glib::ExitCode {
     use std::cell::Cell;
     use std::rc::Rc;
+    // The development runner shares the session bus but owns a separate name,
+    // so its commands never get forwarded to the installed application.
+    let app_id = if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {
+        "dev.mryll.waynote.development"
+    } else {
+        "dev.mryll.waynote"
+    };
     let app = Application::builder()
-        .application_id("dev.mryll.waynote")
+        .application_id(app_id)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
     // Built exactly once, whether the UI comes up via `activate` (no verb) or via
