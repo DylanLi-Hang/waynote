@@ -1059,6 +1059,8 @@ impl Controller {
         if self.window.width() > 0 && self.window.height() > 0 {
             self.state.width = self.window.width().max(360);
             self.state.height = self.window.height().max(300);
+            self.window
+                .set_default_size(self.state.width, self.state.height);
         }
         self.state.active = self.active.clone();
         if let Err(e) = layout::save(&self.paths, &self.state) {

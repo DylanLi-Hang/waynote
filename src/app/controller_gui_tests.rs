@@ -133,8 +133,18 @@ fn board_gui_regressions() {
     assert!(!this.borrow().cards[&first].status.is_visible());
     let editor = this.borrow().cards[&first].editor.clone();
     editor.buffer().set_text("# Draft\n\n- [ ] Task\n");
+    // Change the allocation independently of GTK's initial default size.
+    this.borrow().window.set_size_request(630, 570);
+    pump();
+    let resized = (this.borrow().window.width(), this.borrow().window.height());
     // Hide must flush the buffer even before its deferred changed event runs.
     Controller::toggle(&this);
+    assert_eq!(
+        this.borrow().window.default_size(),
+        resized,
+        "Hide must retain the resized dimensions for the next map"
+    );
+    this.borrow().window.set_size_request(-1, -1);
     pump();
     assert!(!this.borrow().window.is_visible());
     assert_eq!(
@@ -146,6 +156,11 @@ fn board_gui_regressions() {
     );
     Controller::toggle(&this);
     pump();
+    assert_eq!(
+        (this.borrow().window.width(), this.borrow().window.height()),
+        resized,
+        "Show must preserve the last window size"
+    );
     assert!(!this.borrow().cards[&first].editing());
     assert_eq!(
         this.borrow().cards.len(),
