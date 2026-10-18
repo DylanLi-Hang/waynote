@@ -842,7 +842,7 @@ impl Controller {
         }
         success
     }
-    fn finish_edit(&mut self) -> bool {
+    pub(super) fn finish_edit(&mut self) -> bool {
         let Some(id) = self.active.clone() else {
             return true;
         };

@@ -111,6 +111,9 @@ def restore_binding(state):
         return
     if state.get("hyprland") != os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
         raise RuntimeError("Restore Meta+N in the Hyprland session that started this test")
+    if state.get("outside_click"):
+        lua('if waynote_dev_outside_click then '
+            'waynote_dev_outside_click(); waynote_dev_outside_click = nil end')
     current = binds()
     # A compositor reload or user change wins over our saved binding.
     if not current or (len(current) == 1 and current[0].get("description") == DESCRIPTION):
@@ -204,6 +207,7 @@ def run(take_binding):
         if take_binding:
             config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "hypr" / "hyprland.lua"
             state["restore"] = original_binding(binds(), config)
+            state["outside_click"] = True
         child = None
         # Save recovery information before mutating a compositor binding.
         write_state(state)
@@ -224,6 +228,9 @@ def run(take_binding):
                     lua('hl.unbind("SUPER + N"); '
                         f'hl.bind("SUPER + N", hl.dsp.exec_cmd({json.dumps(command)}), '
                         f'{{ description = {json.dumps(DESCRIPTION)} }})')
+                    preview_command = shlex.join([str(REPO / "scripts" / "dev"), "preview"])
+                    lua(f'waynote_dev_outside_click = dofile({json.dumps(str(REPO / "packaging/hyprland.lua"))})'
+                        f'({json.dumps(preview_command)}, {json.dumps(APP_CLASS)})')
                 print(f"Waynote DEV — data and logs: {WORK}\n"
                       "Ctrl+C or scripts/dev stop ends this session.", flush=True)
                 if child.wait() != 0:
@@ -244,8 +251,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", default="run",
                         choices=["run", "stop", "status", "check", "gui", "package",
-                                 "new", "toggle", "show-all", "hide-all"])
-    parser.add_argument("--bind", action="store_true", help="temporarily use Meta+N (Hyprland Lua)")
+                                 "new", "toggle", "show-all", "hide-all", "preview"])
+    parser.add_argument("--bind", action="store_true", help="temporarily use Meta+N and outside-click Preview (Hyprland Lua)")
     args = parser.parse_args()
     if args.command == "run":
         run(args.bind)
@@ -262,6 +269,9 @@ def main():
         execute("cargo", "clippy", "--locked", "--all-targets", cwd=REPO)
     elif args.command == "gui":
         execute(sys.executable, "scripts/gui-regressions.py", cwd=REPO)
+        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            lua(f'dofile({json.dumps(str(REPO / "scripts/test-hyprland.lua"))})'
+                f'({json.dumps(str(REPO / "packaging/hyprland.lua"))})')
     elif args.command == "package":
         execute("nix", "build", ".#default", "--no-link", "--print-out-paths", cwd=REPO)
     else:

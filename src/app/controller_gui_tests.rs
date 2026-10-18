@@ -115,6 +115,7 @@ fn board_gui_regressions() {
         _ => None,
     });
     let this = Controller::with_paths(&app, paths);
+    crate::app::actions::register(&app, &this);
     assert!(
         this.borrow().cards.is_empty(),
         "Run against isolated empty XDG paths"
@@ -243,6 +244,7 @@ fn board_gui_regressions() {
     );
     pump();
     assert!(buffer.has_selection());
+    buffer.insert(&mut buffer.end_iter(), "\nSaved from outside click\n");
     // Focus-follows-mouse may deactivate the window without a click.
     let other = gtk::Window::new();
     other.present();
@@ -252,6 +254,24 @@ fn board_gui_regressions() {
         this.borrow().cards[&first].editing(),
         "Window deactivation alone must not finish editing"
     );
+    app.activate_action("preview", None);
+    pump();
+    assert!(
+        !this.borrow().cards[&first].editing(),
+        "Outside-click action enters Preview"
+    );
+    assert!(
+        this.borrow().window.is_visible(),
+        "Outside-click action keeps the note visible"
+    );
+    assert!(
+        !this.borrow().window.is_active(),
+        "Preview must not steal focus back"
+    );
+    assert!(std::fs::read_to_string(&this.borrow().cards[&first].path)
+        .unwrap()
+        .contains("Saved from outside click"));
+    Controller::edit(&this, &first, None);
     other.destroy();
     this.borrow().window.present();
     pump();
@@ -443,6 +463,12 @@ fn board_gui_regressions() {
         std::fs::write(&card.path, "External content").unwrap();
         assert!(!board.save_card(&first));
         drop(board);
+        app.activate_action("preview", None);
+        pump();
+        assert!(
+            this.borrow().cards[&first].editing(),
+            "Failed outside-click save retains Edit"
+        );
         escape(&this);
         let mut board = this.borrow_mut();
         assert!(board.window.is_visible());

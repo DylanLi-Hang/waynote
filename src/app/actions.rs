@@ -4,7 +4,7 @@ use std::{cell::RefCell, rc::Rc};
 
 pub fn register(app: &gtk::Application, board: &Rc<RefCell<Controller>>) {
     for name in [
-        "summon", "toggle", "show-all", "hide-all", "new-note", "quit",
+        "summon", "toggle", "show-all", "hide-all", "new-note", "preview", "quit",
     ] {
         let action = gio::SimpleAction::new(name, None);
         let board = board.clone();
@@ -15,6 +15,9 @@ pub fn register(app: &gtk::Application, board: &Rc<RefCell<Controller>>) {
                 board.borrow_mut().hide();
             }
             "new-note" => Controller::create(&board),
+            "preview" => {
+                board.borrow_mut().finish_edit();
+            }
             "quit" => {
                 board.borrow_mut().quit();
             }

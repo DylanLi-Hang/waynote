@@ -23,8 +23,11 @@ A save error keeps the draft visible so it can be copied or retried.
 ```
 
 While the runner lives, Meta+N drives the development app. The original binding
-is restored on normal exit or Ctrl+C/SIGTERM. Only the running compositor is
-changed; no NixOS or Home Manager activation is performed. The runner floats
+is restored on normal exit or Ctrl+C/SIGTERM. Temporary, non-consuming mouse
+bindings also save and return to Preview when another window is clicked; moving
+the pointer away keeps Edit active. These bindings are removed by their own
+handles on stop, without touching other mouse bindings. Only the running
+compositor is changed; no NixOS or Home Manager activation is performed. The runner floats
 only its own development window and restores the saved note size (400 × 440
 on the first run), instead of keeping the compositor's initial tiling size.
 
@@ -58,8 +61,9 @@ command continues to address the installed instance.
 The first build fetches pinned dependencies and compiles Cargo crates. Later
 builds reuse the checkout's `target/` artifacts. GUI tests require an active
 Wayland session and briefly open a test window. Tests cover state/persistence
-logic and GTK behavior; use the real compositor to evaluate focus, shortcuts,
-stacking and resizing. Hyprland results do not establish KDE compatibility.
+logic and GTK behavior. On Hyprland, `gui` also runs isolated Lua policy tests
+for outside clicks and binding cleanup; use the real compositor to evaluate
+focus, shortcuts, stacking and resizing. Hyprland results do not establish KDE compatibility.
 
 Logs are appended to `target/dev/app.log`; saved development notes are under
 `target/dev/data/waynote/notes/`. The note uses a regular GTK window, so its

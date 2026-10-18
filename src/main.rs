@@ -12,13 +12,14 @@ fn command(args: &[String]) -> Option<&'static str> {
         Some("hide-all") => Some("hide-all"),
         Some("new") => Some("new-note"),
         Some("quit") => Some("quit"),
+        Some("preview") => Some("preview"),
         _ => None,
     }
 }
 fn main() -> glib::ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if command(&args).is_none() {
-        println!("waynote — Markdown notes\n\nUsage: waynote [summon|toggle|new|show-all|hide-all|quit]\nBind Meta+N to `waynote summon`. A visible window always hides, regardless of focus.");
+        println!("waynote — Markdown notes\n\nUsage: waynote [summon|toggle|new|show-all|hide-all|preview|quit]\nBind Meta+N to `waynote summon`. A visible window always hides, regardless of focus.");
         return glib::ExitCode::SUCCESS;
     }
     let id = if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {
@@ -45,6 +46,10 @@ fn main() -> glib::ExitCode {
             return glib::ExitCode::FAILURE;
         };
         if slot.borrow().is_none() {
+            // Outside-click notifications must never start a resident note.
+            if action == "preview" {
+                return glib::ExitCode::SUCCESS;
+            }
             let controller = app::controller::Controller::new(app);
             app::actions::register(app, &controller);
             *slot.borrow_mut() = Some(controller);
@@ -64,6 +69,7 @@ mod tests {
         assert_eq!(command(&["summon".into()]), command(&["toggle".into()]));
         assert_eq!(command(&[]), Some("show-all"));
         assert_eq!(command(&["new".into()]), Some("new-note"));
+        assert_eq!(command(&["preview".into()]), Some("preview"));
         assert!(command(&["arrange".into()]).is_none());
     }
 }

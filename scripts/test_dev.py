@@ -76,6 +76,15 @@ class DevelopmentTest(unittest.TestCase):
         with patch.object(Path, "read_bytes", side_effect=[binary, b"WAYNOTE_DEV=1\0"]):
             self.assertFalse(dev.owned_child({"child_pid": 999}))
 
+    def test_cleanup_removes_only_our_mouse_handles_even_if_meta_n_changed(self):
+        state = {"restore": "original()", "hyprland": "test", "outside_click": True}
+        with patch.dict(dev.os.environ, HYPRLAND_INSTANCE_SIGNATURE="test"), \
+                patch.object(dev, "binds", return_value=[{"description": "User replacement"}]), \
+                patch.object(dev, "lua") as lua:
+            dev.restore_binding(state)
+            lua.assert_called_once_with('if waynote_dev_outside_click then '
+                                        'waynote_dev_outside_click(); waynote_dev_outside_click = nil end')
+
     def test_empty_child_cmdline_never_reads_environ(self):
         with patch.object(Path, "read_bytes", return_value=b"") as read:
             self.assertFalse(dev.owned_child({"child_pid": 999}))

@@ -10,7 +10,9 @@ A lightweight Markdown sticky note for Linux, forked from
   Each entry shows a left-aligned title and a separate body summary; long text is ellipsized.
   **＋** creates and selects a note, ready to type.
 - Double-click an unlocked note to edit its Markdown; a single click stays in Preview.
-  Mouse movement and window focus changes keep Edit active.
+  Mouse movement and window focus changes keep Edit active. With the optional
+  Hyprland outside-click integration, clicking another window saves and returns
+  to Preview while the note stays visible.
   Click the paper's title or press Esc to save and
   return to Preview; Esc in Preview hides the window. Esc closes an open panel
   first. Hiding also saves. Typing is autosaved; failed saves keep the draft in
@@ -57,6 +59,20 @@ hl.bind("SUPER + N", hl.dsp.exec_cmd("waynote toggle"))
 hl.window_rule({ match = { class = "^dev[.]mryll[.]waynote$" }, float = true })
 ```
 
+To save and return to Preview when clicking another window, load the optional
+Lua helper after these rules (use its absolute path):
+
+```lua
+dofile("/path/to/waynote/packaging/hyprland.lua")()
+```
+
+Nix packages install the helper at `$out/share/waynote/hyprland.lua`.
+It observes left/right/middle button releases without consuming clicks, and
+ignores hover, note-internal clicks and popovers. It only notifies a visible
+Waynote window. Reloading Hyprland removes the bindings if the helper is removed
+from the config. `scripts/dev run --bind` installs/removes them automatically
+for the isolated development app. This integration requires Hyprland's Lua API.
+
 For a traditional Hyprland config:
 
 ```ini
@@ -72,7 +88,9 @@ On KDE, create a window rule matching application ID `dev.mryll.waynote`, set
 **Keep above** as desired, and assign Meta+N to `waynote toggle` in Shortcuts.
 KDE has not been verified in this development session.
 
-Other commands are `new`, `summon`, `show-all`, `hide-all` and `quit`.
+Other commands are `new`, `summon`, `show-all`, `hide-all`, `preview` and `quit`.
+`preview` saves and leaves Edit without showing, hiding or focusing the window;
+it does nothing when Waynote is not running. Failed saves retain Edit and the draft.
 Only `toggle` is needed for everyday use; creation is available in the note header.
 
 ## Development
