@@ -9,9 +9,10 @@ A lightweight Markdown sticky note for Linux, forked from
   visible at a time; switching saves the current draft and opens the selected note in Preview.
   **＋** creates and selects a note, ready to type.
 - Click an unlocked note to edit its Markdown. Mouse movement and window focus
-  changes keep Edit active. Click the paper's title or hide the window to save
-  and return to Preview. Typing is autosaved; failed saves keep the draft and
-  show an error.
+  changes keep Edit active. Click the paper's title or press Esc to save and
+  return to Preview; Esc in Preview hides the window. Esc closes an open panel
+  first. Hiding also saves. Typing is autosaved; failed saves keep the draft in
+  Edit and show an error.
 - The note's **⋯** menu contains Copy, Color, Lock and Delete. Lock makes content
   read-only; selection, links and copying remain available.
 - Markdown includes tables, task checkboxes, links, code and local images.

@@ -15,6 +15,19 @@ fn pump() {
     }
 }
 
+fn escape(this: &Rc<RefCell<Controller>>) {
+    let controllers = this.borrow().window.observe_controllers();
+    let keys = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
+        .unwrap();
+    assert!(keys.emit_by_name::<bool>(
+        "key-pressed",
+        &[&gdk::Key::Escape, &0u32, &gdk::ModifierType::empty()],
+    ));
+    pump();
+}
+
 fn checkbox(widget: &gtk::Widget) -> Option<gtk::CheckButton> {
     if let Ok(check) = widget.clone().downcast::<gtk::CheckButton>() {
         return Some(check);
@@ -117,6 +130,26 @@ fn board_gui_regressions() {
         "Summon must not create duplicates"
     );
     assert_eq!(app.windows().len(), 1);
+    Controller::edit(&this, &first, None);
+    editor
+        .buffer()
+        .set_text("# Draft\n\n- [ ] Task\n\nSaved with Escape\n");
+    escape(&this);
+    assert!(
+        this.borrow().window.is_visible(),
+        "Edit Escape keeps the note visible"
+    );
+    assert!(!this.borrow().cards[&first].editing());
+    assert!(std::fs::read_to_string(&this.borrow().cards[&first].path)
+        .unwrap()
+        .contains("Saved with Escape"));
+    escape(&this);
+    assert!(
+        !this.borrow().window.is_visible(),
+        "Preview Escape hides the note"
+    );
+    Controller::show(&this);
+    pump();
     Controller::create(&this);
     let queued = this
         .borrow()
@@ -346,6 +379,14 @@ fn board_gui_regressions() {
         card.editor.buffer().set_text("Local unsaved draft");
         std::fs::write(&card.path, "External content").unwrap();
         assert!(!board.save_card(&first));
+        drop(board);
+        escape(&this);
+        let mut board = this.borrow_mut();
+        assert!(board.window.is_visible());
+        assert!(
+            board.cards[&first].editing(),
+            "Failed-save Escape keeps the draft in Edit"
+        );
         assert!(
             !board.select(&destination),
             "Failed saves prevent switching"

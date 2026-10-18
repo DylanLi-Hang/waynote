@@ -218,6 +218,13 @@ impl Controller {
                         board.selector_popover.popdown();
                     } else if let Some(card) = board.cards.values().find(|c| c.menu.is_visible()) {
                         card.menu.popdown();
+                    } else if board
+                        .active
+                        .as_ref()
+                        .and_then(|id| board.cards.get(id))
+                        .is_some_and(Card::editing)
+                    {
+                        board.finish_edit();
                     } else {
                         board.hide();
                     }
