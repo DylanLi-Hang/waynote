@@ -56,8 +56,11 @@ On Hyprland with Lua config:
 
 ```lua
 hl.bind("SUPER + N", hl.dsp.exec_cmd("waynote toggle"))
-hl.window_rule({ match = { class = "^dev[.]mryll[.]waynote$" }, float = true })
+hl.window_rule({ match = { class = "^dev[.]mryll[.]waynote$" }, float = true, no_anim = true })
 ```
+
+The rule disables animations for Waynote so restoring its position appears
+instantly instead of sliding from the compositor’s initial placement.
 
 To keep the floating position across hide/show and save/return to Preview when
 clicking another window, load the optional Lua helper after these rules (use its
