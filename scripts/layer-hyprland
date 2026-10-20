@@ -11,10 +11,13 @@ if len(sys.argv) != 2 or sys.argv[1] not in ("enable", "disable"):
     raise SystemExit("Usage: scripts/layer-hyprland enable|disable")
 code = "if waynote_layer_outside_click then waynote_layer_outside_click(); waynote_layer_outside_click = nil end"
 if sys.argv[1] == "enable":
-    gapplication = shutil.which("gapplication")
-    if not gapplication:
-        raise SystemExit("gapplication is required")
-    command = shlex.join([gapplication, "action", "dev.mryll.waynote.layershell.development", "preview-outside"])
+    gdbus = shutil.which("gdbus")
+    if not gdbus:
+        raise SystemExit("gdbus is required")
+    command = shlex.join([gdbus, "call", "--session", "--dest",
+        "dev.mryll.waynote.layershell.development", "--object-path",
+        "/dev/mryll/waynote/layershell/development", "--method",
+        "org.gtk.Actions.Activate", "preview-outside", "[]", "{}"])
     helper = Path(__file__).resolve().parent.parent / "packaging/hyprland.lua"
     code += f"; waynote_layer_outside_click = dofile({json.dumps(str(helper))})({json.dumps(command)}, nil, true)"
 result = subprocess.run(["hyprctl", "eval", code], text=True, capture_output=True, check=True)
