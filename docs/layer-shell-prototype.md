@@ -9,7 +9,7 @@ Run `./scripts/layer-dev` to build and show the real note interface with Layer
 Shell. It supports the usual `show-all`, `hide-all`, `summon`, `preview`, `new`,
 and `quit` commands. Notes, configuration and window state are isolated under
 `target/layer-dev`. Its distinct app ID is
-`dev.mryll.waynote.layershell.development`. The runner does not use Hyprland IPC.
+`dev.mryll.waynote.layershell.development`. Window movement itself does not use Hyprland IPC.
 The optional Cargo feature retains its initial name `layer-shell-prototype`;
 the application additionally requires `WAYNOTE_LAYER_SHELL=1` to enable it.
 
@@ -32,6 +32,21 @@ Focus loss attempts to save but retains Edit, including on desktops where focus
 follows the pointer. Click the title or press Escape to return to Preview;
 hiding or switching notes also finishes editing. Failed saves keep the draft.
 No import or File dialog control is included in the note interface.
+
+For click-outside Preview on Hyprland, run `./scripts/layer-hyprland enable`
+after starting the test app. This reuses `packaging/hyprland.lua` with three
+non-consuming left/right/middle release bindings. A D-Bus `preview-outside`
+action reuses the existing save/Preview path only for a visible, unfocused note
+with no open popup. Hover alone never sends this action. Layer surfaces are not
+normal Hyprland window-list entries, so the app checks focus itself.
+No raw input devices or additional device permissions are used.
+
+Run `./scripts/layer-hyprland disable` to remove only these bindings. Re-enabling
+first removes its old handles. This is a live-session integration: a Hyprland
+config reload removes it, so enable again afterwards. It does not change Meta+N,
+installed Waynote's bindings, or system configuration. Disable it when finishing
+the trial. Other compositors retain explicit title/Escape Preview controls.
+
 
 The ignored `layer_gui_regressions` Rust test exercises the real controller on
 Wayland using temporary notes: edit/save, Notes search, action menu, keyboard

@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+"""Install/remove only the isolated Layer Shell app's outside-click bindings."""
+import json
+from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
+
+if len(sys.argv) != 2 or sys.argv[1] not in ("enable", "disable"):
+    raise SystemExit("Usage: scripts/layer-hyprland enable|disable")
+code = "if waynote_layer_outside_click then waynote_layer_outside_click(); waynote_layer_outside_click = nil end"
+if sys.argv[1] == "enable":
+    gapplication = shutil.which("gapplication")
+    if not gapplication:
+        raise SystemExit("gapplication is required")
+    command = shlex.join([gapplication, "action", "dev.mryll.waynote.layershell.development", "preview-outside"])
+    helper = Path(__file__).resolve().parent.parent / "packaging/hyprland.lua"
+    code += f"; waynote_layer_outside_click = dofile({json.dumps(str(helper))})({json.dumps(command)}, nil, true)"
+result = subprocess.run(["hyprctl", "eval", code], text=True, capture_output=True, check=True)
+if result.stdout.strip() != "ok":
+    raise SystemExit(f"Hyprland integration failed: {result.stdout} {result.stderr}")
+print("Waynote Layer Shell outside-click integration " + sys.argv[1] + "d")

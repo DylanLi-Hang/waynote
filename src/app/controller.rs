@@ -909,6 +909,12 @@ impl Controller {
         }
         success
     }
+    /// Called only by the compositor's non-consuming mouse-release binding.
+    pub(super) fn preview_after_outside_click(&mut self) {
+        if self.window.is_visible() && !self.window.is_active() && !self.popup_visible() {
+            self.finish_edit();
+        }
+    }
     pub(super) fn finish_edit(&mut self) -> bool {
         let Some(id) = self.active.clone() else {
             return true;

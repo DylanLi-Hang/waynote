@@ -105,4 +105,14 @@ return function(path)
     windows = { { class = "dev.mryll.waynote", visible = true } }
     bindings[4].callback()
     assert(calls[4] == "waynote preview", "Installed integration uses the normal app")
+    local before_calls, before_events = #calls, #handles
+    local remove_layer = install("layer preview-outside", "layer.dev", true)
+    assert(#handles == before_events, "Layers need no normal-window placement hooks")
+    active, windows = nil, {}
+    assert(#calls == before_calls, "Hover must not send a layer notification")
+    for i = 7, 9 do bindings[i].callback() end
+    assert(#calls == before_calls + 3 and calls[#calls] == "layer preview-outside")
+    remove_layer()
+    for i = 7, 9 do assert(bindings[i].removed) end
+
 end

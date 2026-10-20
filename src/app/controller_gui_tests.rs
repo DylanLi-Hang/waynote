@@ -617,6 +617,32 @@ fn layer_gui_regressions() {
     menu.popdown();
     pump();
     assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    // A click notification while a popup is open must not leave Edit.
+    Controller::edit(&this, &id, None);
+    popup.popup();
+    pump();
+    this.borrow_mut().preview_after_outside_click();
+    assert!(this.borrow().cards[&id].editing());
+    popup.popdown();
+    pump();
+    // Focus loss/hover alone retains Edit (checked above). Only the explicit
+    // compositor click notification takes the existing save/Preview path.
+    window.set_visible(false);
+    pump();
+    this.borrow_mut().preview_after_outside_click();
+    assert!(
+        this.borrow().cards[&id].editing(),
+        "Hidden notes ignore notifications"
+    );
+    window.set_visible(true);
+    pump();
+    assert!(
+        !window.is_active(),
+        "Run layer focus regressions in a private compositor"
+    );
+    this.borrow_mut().preview_after_outside_click();
+    assert!(!this.borrow().cards[&id].editing());
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
     // A failed save must retain the edit buffer and prevent hiding the canvas.
     Controller::edit(&this, &id, None);
     let original_path = this.borrow().cards[&id].path.clone();
