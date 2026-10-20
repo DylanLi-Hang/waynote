@@ -10,8 +10,16 @@ readme = "README.md"
 keywords = ["wayland", "sticky-notes", "markdown", "gtk4"]
 categories = ["gui", "command-line-utilities"]
 
+[features]
+layer-shell-prototype = ["dep:gtk4-layer-shell"]
+
+[[example]]
+name = "layer-shell-prototype"
+required-features = ["layer-shell-prototype"]
+
 [dependencies]
 gtk = { version = "0.11.3", package = "gtk4", features = ["v4_10"] }
+gtk4-layer-shell = { version = "0.8.0", optional = true }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 notify = "6"
 pulldown-cmark = { version = "0.13.4", features = ["default"] }

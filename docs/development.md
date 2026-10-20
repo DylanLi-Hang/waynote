@@ -70,3 +70,10 @@ compositor to evaluate focus, shortcuts, stacking and resizing. Hyprland results
 Logs are appended to `target/dev/app.log`; saved development notes are under
 `target/dev/data/waynote/notes/`. The note uses a regular GTK window, so its
 floating and stacking policy belongs to the compositor; see the README.
+
+## Layer Shell prototype
+
+The `feature/layer-shell-window` branch has a separate opt-in window/focus probe.
+See [the prototype guide](layer-shell-prototype.md) for its isolated launch
+commands, test scope and migration gates. The normal development runner above
+still exercises the existing regular-window application.
