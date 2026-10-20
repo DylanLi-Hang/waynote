@@ -28,7 +28,9 @@ clamped after layout. Monitor choice, cross-monitor dragging and hotplug
 migration remain unsupported/unverified. Very small outputs below the UI's
 natural minimum size are not supported.
 Preview uses keyboard mode None; editing and Notes/action popovers use OnDemand.
-Focus loss attempts to save and return to Preview. Failed saves keep the draft.
+Focus loss attempts to save but retains Edit, including on desktops where focus
+follows the pointer. Click the title or press Escape to return to Preview;
+hiding or switching notes also finishes editing. Failed saves keep the draft.
 No import or File dialog control is included in the note interface.
 
 The ignored `layer_gui_regressions` Rust test exercises the real controller on

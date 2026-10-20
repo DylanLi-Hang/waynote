@@ -265,7 +265,9 @@ impl Controller {
                 defer(&weak, |this| {
                     let mut board = this.borrow_mut();
                     if !board.window.is_active() && !board.popup_visible() {
-                        board.finish_edit();
+                        // Focus can follow the pointer. Save without treating
+                        // focus loss as an explicit request to leave Edit.
+                        board.flush();
                     }
                 });
             });

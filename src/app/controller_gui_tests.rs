@@ -576,6 +576,24 @@ fn layer_gui_regressions() {
         .buffer()
         .set_text("# Layer test\n\nSaved native note");
     assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    // Force inactivity independently of compositor focus policy. This bypasses
+    // Controller::hide(), which intentionally finishes editing.
+    window.set_visible(false);
+    pump();
+    assert!(!window.is_active());
+    window.notify("is-active");
+    pump();
+    assert!(
+        this.borrow().cards[&id].editing(),
+        "focus loss must retain Edit"
+    );
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    assert!(std::fs::read_to_string(&this.borrow().cards[&id].path)
+        .unwrap()
+        .contains("Saved native note"));
+    window.set_visible(true);
+    pump();
+    assert!(this.borrow().cards[&id].editing());
     assert!(this.borrow_mut().finish_edit());
     pump();
     assert_eq!(window.keyboard_mode(), KeyboardMode::None);
