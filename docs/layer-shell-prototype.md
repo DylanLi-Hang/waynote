@@ -13,9 +13,10 @@ Shell window, not a migration of the installed note application. The ordinary
 ./scripts/layer-prototype preview
 ./scripts/layer-prototype quit
 ./scripts/layer-prototype smoke    # mapping/mode/save/remap assertions; exits
+./scripts/layer-prototype dialog-smoke  # real chooser open/cancel; exits
 ```
 
-The `smoke` command uses a separate application ID ending in `.smoke` and
+The smoke commands use a separate application ID ending in `.smoke` and
 a `smoke/` subdirectory; it never addresses the interactive prototype or installed Waynote.
 The prototype is an opt-in Cargo example (`layer-shell-prototype` feature).
 The script uses the pinned development shell, not a system build or activation.
@@ -43,8 +44,11 @@ keyboard focus while editing attempts save/Preview. This is a focus-loss policy,
 not an equivalent of the old global outside-click observer: it may also react
 to keyboard window switches. Save failures retain the draft and prevent hiding.
 
-File dialog tests a native chooser and its parenting only; selected files are
-not read or imported. Search tests a focusable popup only, not real notes.
+File dialog tests a standalone native chooser; selected files are not read or
+imported. It deliberately has no GTK parent: exporting a Layer Shell surface
+as an xdg_toplevel parent causes a fatal Wayland protocol error. Only one chooser
+can open at a time. The dialog smoke test opens and cancels it, then checks the
+callback, window survival and non-focusable Preview. Search tests a focusable popup only, not real notes.
 Dragging, resizing, position persistence, monitor selection, real note editing,
 and clipboard/selection integration are intentionally deferred to later gates.
 

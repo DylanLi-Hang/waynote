@@ -12,6 +12,8 @@ struct Probe {
     stack: gtk::Stack,
     status: gtk::Label,
     search: gtk::Popover,
+    file: gtk::Button,
+    chooser: RefCell<Option<gio::Cancellable>>,
     root: PathBuf,
     _hold: gio::ApplicationHoldGuard,
 }
@@ -103,6 +105,8 @@ impl Probe {
             stack,
             status,
             search,
+            file: file.clone(),
+            chooser: RefCell::new(None),
             root,
             _hold: app.hold(),
         });
@@ -171,12 +175,22 @@ impl Probe {
         let p = Rc::downgrade(&probe);
         file.connect_clicked(move |_| {
             if let Some(p) = p.upgrade() {
+                if p.chooser.borrow().is_some() {
+                    return;
+                }
+                let cancel = gio::Cancellable::new();
+                *p.chooser.borrow_mut() = Some(cancel.clone());
+                p.file.set_sensitive(false);
                 let dialog = gtk::FileDialog::builder()
                     .title("Prototype file-dialog test (does not import)")
                     .build();
                 let weak = Rc::downgrade(&p);
-                dialog.open(Some(&p.window), gio::Cancellable::NONE, move |result| {
+                // Layer surfaces cannot be exported as xdg_toplevel parents.
+                // Let the portal own a standalone chooser instead.
+                dialog.open(None::<&gtk::Window>, Some(&cancel), move |result| {
                     if let Some(p) = weak.upgrade() {
+                        p.chooser.borrow_mut().take();
+                        p.file.set_sensitive(true);
                         p.status.set_text(if result.is_ok() {
                             "File selected; no data imported"
                         } else {
@@ -289,11 +303,23 @@ impl Probe {
 }
 fn main() -> glib::ExitCode {
     let command = std::env::args().nth(1).unwrap_or_else(|| "toggle".into());
-    if !["toggle", "show", "hide", "preview", "quit", "smoke"].contains(&command.as_str()) {
-        eprintln!("Usage: layer-shell-prototype [toggle|show|hide|preview|quit|smoke]");
+    if ![
+        "toggle",
+        "show",
+        "hide",
+        "preview",
+        "quit",
+        "smoke",
+        "dialog-smoke",
+    ]
+    .contains(&command.as_str())
+    {
+        eprintln!(
+            "Usage: layer-shell-prototype [toggle|show|hide|preview|quit|smoke|dialog-smoke]"
+        );
         return glib::ExitCode::FAILURE;
     }
-    let id = if command == "smoke" {
+    let id = if command.ends_with("smoke") {
         format!("{ID}.smoke")
     } else {
         ID.to_owned()
@@ -323,7 +349,7 @@ fn main() -> glib::ExitCode {
                         .unwrap()
                         .join("target/layer-prototype")
                 });
-            let root = if command == "smoke" {
+            let root = if command.ends_with("smoke") {
                 root.join("smoke")
             } else {
                 root
@@ -343,6 +369,28 @@ fn main() -> glib::ExitCode {
             }
             "toggle" if p.window.is_visible() => p.hide(),
             "smoke" => p.smoke(app),
+            "dialog-smoke" => {
+                p.show();
+                let app = app.clone();
+                glib::timeout_add_local_once(Duration::from_millis(400), move || {
+                    p.file.emit_clicked();
+                    assert!(!p.file.is_sensitive());
+                    glib::timeout_add_local_once(Duration::from_secs(2), move || {
+                        assert!(p.window.is_mapped());
+                        let cancel = p.chooser.borrow().as_ref().expect("chooser remains open").clone();
+                        cancel.cancel();
+                        glib::timeout_add_local_once(Duration::from_secs(1), move || {
+                            assert!(p.chooser.borrow().is_none());
+                            assert!(p.file.is_sensitive());
+                            assert!(p.window.is_mapped());
+                            assert_eq!(p.window.keyboard_mode(), KeyboardMode::None);
+                            assert!(!p.window.is_active());
+                            println!("PASS: file chooser open/cancel, callback, layer survives, Preview remains unfocused");
+                            app.quit();
+                        });
+                    });
+                });
+            },
             _ => p.show(),
         }
         glib::ExitCode::SUCCESS
