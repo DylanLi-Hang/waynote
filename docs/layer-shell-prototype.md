@@ -1,8 +1,33 @@
-# Layer Shell migration: first validation gate
+# Layer Shell migration and isolated development app
 
-Branch: `feature/layer-shell-window`. The first gate is an isolated GTK4 Layer
-Shell window, not a migration of the installed note application. The ordinary
-`waynote` binary and real note store keep their current behavior.
+Branch: `feature/layer-shell-window`. Layer Shell is opt-in; the installed app
+and its notes have not been migrated.
+
+## Native note interface
+
+Run `./scripts/layer-dev` to build and show the real note interface with Layer
+Shell. It supports the usual `show-all`, `hide-all`, `summon`, `preview`, `new`,
+and `quit` commands. Notes, configuration and window state are isolated under
+`target/layer-dev`. Its distinct app ID is
+`dev.mryll.waynote.layershell.development`. The runner does not use Hyprland IPC.
+The optional Cargo feature retains its initial name `layer-shell-prototype`;
+the application additionally requires `WAYNOTE_LAYER_SHELL=1` to enable it.
+
+The header supports dragging (position commits on release), with a bottom-right
+resize grip and explicit Hide button. Position and size persist when hiding.
+The current surface is anchored top-left on the compositor-selected monitor;
+dragging clamps to that monitor. Monitor choice, hotplug recovery, restored
+position clamping after display changes, and resize bounds remain later work.
+Preview uses keyboard mode None; editing and Notes/action popovers use OnDemand.
+Focus loss attempts to save and return to Preview. Failed saves keep the draft.
+No import or File dialog control is included in the note interface.
+
+The ignored `layer_gui_regressions` Rust test exercises the real controller on
+Wayland using temporary notes: edit/save, Notes search, action menu, keyboard
+modes, drag/resize signals, persisted placement and unfocused hide/remap.
+Physical pointer/keyboard interaction and multiple displays still need trials.
+
+## Isolated protocol prototype
 
 ## Run and stop
 
@@ -44,13 +69,13 @@ keyboard focus while editing attempts save/Preview. This is a focus-loss policy,
 not an equivalent of the old global outside-click observer: it may also react
 to keyboard window switches. Save failures retain the draft and prevent hiding.
 
-File dialog tests a standalone native chooser; selected files are not read or
+The CLI-only `dialog-smoke` test opens a standalone native chooser; selected files are not read or
 imported. It deliberately has no GTK parent: exporting a Layer Shell surface
 as an xdg_toplevel parent causes a fatal Wayland protocol error. Only one chooser
 can open at a time. The dialog smoke test opens and cancels it, then checks the
 callback, window survival and non-focusable Preview. Search tests a focusable popup only, not real notes.
-Dragging, resizing, position persistence, monitor selection, real note editing,
-and clipboard/selection integration are intentionally deferred to later gates.
+The scratch prototype is retained for focused protocol regressions. The native
+interface above now covers real note editing and basic geometry.
 
 ## Acceptance checklist
 
@@ -61,20 +86,19 @@ Automated smoke coverage:
 - Edit requests OnDemand; saving returns to None.
 - Scratch saves and window visibility transitions succeed.
 
-Interactive checks still required before migrating the real controller:
+Interactive checks still required before migrating the installed application:
 
 - Type in another app while Preview is visible; no keys reach the note.
 - Enter Edit, type, then click another app; confirm save/Preview and focus return.
 - Open Search, type, close it; confirm keyboard mode is released.
-- Open/cancel the file chooser and inspect focus return.
+- Run `dialog-smoke` to check the standalone chooser regression.
 - Switch normal/special workspaces and test against other floating/fullscreen windows.
 - Check both monitors and scale factors; do not claim hotplug support yet.
 
 ## Later gates
 
-1. Integrate the validated window/focus policy with the existing controller,
-   retaining save-error, draft, menu and note-switching behavior.
-2. Implement application-managed drag/resize, display choice and safe layout recovery.
+1. Complete interactive controller checks, including save-error and draft recovery.
+2. Refine drag feedback, display choice and safe layout recovery.
 3. Update the development runner and remove obsolete Hyprland helpers only after
    the replacement has passed interactive regression checks.
 4. Trial against isolated copied fixtures before a deliberate installed-app migration.

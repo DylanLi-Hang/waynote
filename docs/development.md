@@ -71,9 +71,10 @@ Logs are appended to `target/dev/app.log`; saved development notes are under
 `target/dev/data/waynote/notes/`. The note uses a regular GTK window, so its
 floating and stacking policy belongs to the compositor; see the README.
 
-## Layer Shell prototype
+## Layer Shell development
 
-The `feature/layer-shell-window` branch has a separate opt-in window/focus probe.
-See [the prototype guide](layer-shell-prototype.md) for its isolated launch
-commands, test scope and migration gates. The normal development runner above
+The `feature/layer-shell-window` branch provides `./scripts/layer-dev` for the
+real note interface using Layer Shell and isolated notes, plus a protocol probe.
+See [the migration guide](layer-shell-prototype.md) for launch commands, test
+scope and migration gates. The normal development runner above
 still exercises the existing regular-window application.

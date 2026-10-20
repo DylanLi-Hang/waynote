@@ -22,7 +22,9 @@ fn main() -> glib::ExitCode {
         println!("waynote — Markdown notes\n\nUsage: waynote [summon|toggle|new|show-all|hide-all|preview|quit]\nBind Meta+N to `waynote summon`. A visible window always hides, regardless of focus.");
         return glib::ExitCode::SUCCESS;
     }
-    let id = if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {
+    let id = if app::layer_window::enabled() {
+        "dev.mryll.waynote.layershell.development"
+    } else if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {
         "dev.mryll.waynote.development"
     } else {
         "dev.mryll.waynote"
@@ -49,6 +51,13 @@ fn main() -> glib::ExitCode {
             // Outside-click notifications must never start a resident note.
             if action == "preview" {
                 return glib::ExitCode::SUCCESS;
+            }
+            #[cfg(feature = "layer-shell-prototype")]
+            if app::layer_window::enabled()
+                && (!gtk4_layer_shell::is_supported() || gtk4_layer_shell::protocol_version() < 4)
+            {
+                eprintln!("Waynote requires Wayland Layer Shell protocol v4 for on-demand focus.");
+                return glib::ExitCode::FAILURE;
             }
             let controller = app::controller::Controller::new(app);
             app::actions::register(app, &controller);

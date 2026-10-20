@@ -86,7 +86,7 @@ impl Probe {
         search.set_child(Some(&entry));
         menu.set_popover(Some(&search));
         let file = gtk::Button::with_label("File dialog");
-        for b in [&edit, &done, &file] {
+        for b in [&edit, &done] {
             controls.append(b);
         }
         controls.append(&menu);

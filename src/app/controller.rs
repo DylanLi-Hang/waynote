@@ -1,4 +1,5 @@
 //! One resident window showing one selected note. GTK buffers hold unsaved drafts.
+use super::layer_window;
 use crate::{
     core::{id_policy::UlidGen, markdown, note::Note, reconcile::Known, theme},
     platform::{config, layout, paths, render, store, watcher},
@@ -171,6 +172,14 @@ impl Controller {
             .decorated(false)
             .child(&content)
             .build();
+        layer_window::setup(&window, &state);
+        if layer_window::enabled() {
+            let grip = gtk::Label::new(Some("◢"));
+            grip.set_halign(gtk::Align::End);
+            grip.set_tooltip_text(Some("Drag to resize"));
+            layer_window::resize(&window, &grip);
+            content.append(&grip);
+        }
         window.add_css_class("waynote-window");
         let active = state.active.clone();
         let this = Rc::new(RefCell::new(Self {
@@ -243,8 +252,46 @@ impl Controller {
             glib::Propagation::Proceed
         });
         this.borrow().window.add_controller(keys);
+        if layer_window::enabled() {
+            Self::watch_popup(
+                &this.borrow().selector_popover,
+                &this.borrow().window,
+                &Rc::downgrade(&this),
+            );
+            let weak = Rc::downgrade(&this);
+            this.borrow().window.connect_is_active_notify(move |_| {
+                defer(&weak, |this| {
+                    let mut board = this.borrow_mut();
+                    if !board.window.is_active() && !board.popup_visible() {
+                        board.finish_edit();
+                    }
+                });
+            });
+        }
         Self::start_watcher(&this);
         this
+    }
+
+    fn popup_visible(&self) -> bool {
+        self.selector_popover.is_visible() || self.cards.values().any(|c| c.menu.is_visible())
+    }
+    fn sync_keyboard(&self) {
+        let editing = self
+            .active
+            .as_ref()
+            .and_then(|id| self.cards.get(id))
+            .is_some_and(Card::editing);
+        layer_window::keyboard(&self.window, editing || self.popup_visible());
+    }
+    fn watch_popup(
+        popup: &gtk::Popover,
+        window: &gtk::ApplicationWindow,
+        weak: &Weak<RefCell<Self>>,
+    ) {
+        let window = window.clone();
+        popup.connect_show(move |_| layer_window::keyboard(&window, true));
+        let weak = weak.clone();
+        popup.connect_closed(move |_| defer(&weak, |this| this.borrow().sync_keyboard()));
     }
 
     fn report(&self, text: &str) {
@@ -469,8 +516,22 @@ impl Controller {
         header.append(&lock);
         header.append(&new);
         header.append(&menu_button);
-        let handle = gtk::WindowHandle::builder().child(&header).build();
-        root.append(&handle);
+        if layer_window::enabled() {
+            let hide = gtk::Button::with_label("Hide");
+            let weak = self.weak.clone();
+            hide.connect_clicked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.borrow_mut().hide();
+                }
+            });
+            header.append(&hide);
+            root.append(&header);
+            layer_window::drag(&self.window, &title);
+            Self::watch_popup(&menu, &self.window, &self.weak);
+        } else {
+            let handle = gtk::WindowHandle::builder().child(&header).build();
+            root.append(&handle);
+        }
         title.set_tooltip_text(Some("Click to preview; drag to move"));
         let preview_click = gtk::GestureClick::new();
         preview_click.set_button(1);
@@ -860,6 +921,7 @@ impl Controller {
             card.root.remove_css_class("waynote-active");
         }
         self.render_card(&id);
+        self.sync_keyboard();
         true
     }
     fn edit(this: &Rc<RefCell<Self>>, id: &str, line: Option<i32>) {
@@ -877,6 +939,7 @@ impl Controller {
             if card.note.locked {
                 return;
             }
+            layer_window::keyboard(&board.window, true);
             card.stack.set_visible_child_name("edit");
             card.root.add_css_class("waynote-active");
             card.editor.clone()
@@ -1030,7 +1093,7 @@ impl Controller {
         };
         if let Some(id) = result {
             let window = this.borrow().window.clone();
-            window.present();
+            layer_window::show(&window);
             let weak = Rc::downgrade(this);
             defer(&weak, move |this| Self::edit(this, &id, None));
         }
@@ -1042,7 +1105,7 @@ impl Controller {
             board.initial = false;
             (board.window.clone(), first, board.cards.is_empty())
         };
-        window.present();
+        layer_window::show(&window);
         if first && empty {
             Self::create(this);
         }
@@ -1062,6 +1125,7 @@ impl Controller {
             self.window
                 .set_default_size(self.state.width, self.state.height);
         }
+        layer_window::save(&self.window, &mut self.state);
         self.state.active = self.active.clone();
         if let Err(e) = layout::save(&self.paths, &self.state) {
             self.report(&format!("Cannot save window state: {e}"));

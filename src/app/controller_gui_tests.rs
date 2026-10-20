@@ -545,3 +545,88 @@ fn board_gui_regressions() {
     assert_eq!(app.windows().len(), 1);
     this.borrow().window.destroy();
 }
+
+#[cfg(feature = "layer-shell-prototype")]
+#[test]
+#[ignore = "requires Wayland Layer Shell v4"]
+fn layer_gui_regressions() {
+    use gtk4_layer_shell::{Edge, KeyboardMode, LayerShell};
+    std::env::set_var("WAYNOTE_LAYER_SHELL", "1");
+    gtk::init().unwrap();
+    assert!(gtk4_layer_shell::is_supported());
+    let app = gtk::Application::builder()
+        .application_id("dev.mryll.waynote.layer.test")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths::Paths::from_env(|_| Some(dir.path().to_string_lossy().into_owned()));
+    let this = Controller::with_paths(&app, paths);
+    Controller::show(&this);
+    pump();
+    let window = this.borrow().window.clone();
+    assert!(window.is_layer_window());
+    let id = this.borrow().active.clone().unwrap();
+    Controller::edit(&this, &id, None);
+    this.borrow().cards[&id]
+        .editor
+        .buffer()
+        .set_text("# Layer test\n\nSaved native note");
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    assert!(this.borrow_mut().finish_edit());
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    assert!(std::fs::read_to_string(&this.borrow().cards[&id].path)
+        .unwrap()
+        .contains("Saved native note"));
+    let popup = this.borrow().selector_popover.clone();
+    popup.popup();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    this.borrow().search.set_text("Layer test");
+    pump();
+    assert!(this.borrow().selector.first_child().is_some());
+    popup.popdown();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    let menu = this.borrow().cards[&id].menu.clone();
+    menu.popup();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    menu.popdown();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    let title = this.borrow().cards[&id].title.clone();
+    let controllers = title.observe_controllers();
+    let drag = (0..controllers.n_items())
+        .filter_map(|i| controllers.item(i))
+        .find_map(|o| o.downcast::<gtk::GestureDrag>().ok())
+        .unwrap();
+    let old_x = window.margin(Edge::Left);
+    drag.emit_by_name::<()>("drag-end", &[&20.0f64, &15.0f64]);
+    pump();
+    assert_eq!(window.margin(Edge::Left), old_x + 20);
+    let grip = window.child().unwrap().last_child().unwrap();
+    let controllers = grip.observe_controllers();
+    let resize = (0..controllers.n_items())
+        .filter_map(|i| controllers.item(i))
+        .find_map(|o| o.downcast::<gtk::GestureDrag>().ok())
+        .unwrap();
+    let before = (window.width(), window.height());
+    resize.emit_by_name::<()>("drag-begin", &[&0.0f64, &0.0f64]);
+    resize.emit_by_name::<()>("drag-update", &[&40.0f64, &30.0f64]);
+    pump();
+    assert_eq!(
+        (window.width(), window.height()),
+        (before.0 + 40, before.1 + 30)
+    );
+    window.set_margin(Edge::Left, 123);
+    assert!(this.borrow_mut().hide());
+    pump();
+    assert_eq!(layout::load(&this.borrow().paths).layer_x, 123);
+    Controller::show(&this);
+    pump();
+    assert!(window.is_mapped());
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    assert!(!window.is_active());
+    this.borrow_mut().hide();
+}
