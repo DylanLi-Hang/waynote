@@ -13,19 +13,40 @@ and `quit` commands. Notes, configuration and window state are isolated under
 The optional Cargo feature retains its initial name `layer-shell-prototype`;
 the application additionally requires `WAYNOTE_LAYER_SHELL=1` to enable it.
 
-The header supports dragging (position commits on release), with a bottom-right
-resize grip and explicit Hide button. Position and size persist when hiding.
-The current surface is anchored top-left on the compositor-selected monitor;
-dragging clamps to that monitor. Monitor choice, hotplug recovery, restored
-position clamping after display changes, and resize bounds remain later work.
+The header follows the pointer continuously while dragging, with a bottom-right
+resize grip and explicit Hide button. A transparent Layer Shell surface stays
+anchored to all four edges of the current output; only the note panel moves
+inside a GtkFixed. Surface-relative pointer coordinates avoid feedback from a
+moving widget. The GDK input region follows the panel's actual allocation, so
+outside clicks pass through. It starts empty on every map until layout is ready.
+Each region change schedules a render so the final resize region is committed
+even if the pointer stops and the note needs no further repaint.
+
+Position and size persistence stores panel geometry, never the output-sized
+surface. Drag and resize clamp to the current output; stored positions are
+clamped after layout. Monitor choice, cross-monitor dragging and hotplug
+migration remain unsupported/unverified. Very small outputs below the UI's
+natural minimum size are not supported.
 Preview uses keyboard mode None; editing and Notes/action popovers use OnDemand.
 Focus loss attempts to save and return to Preview. Failed saves keep the draft.
 No import or File dialog control is included in the note interface.
 
 The ignored `layer_gui_regressions` Rust test exercises the real controller on
 Wayland using temporary notes: edit/save, Notes search, action menu, keyboard
-modes, drag/resize signals, persisted placement and unfocused hide/remap.
-Physical pointer/keyboard interaction and multiple displays still need trials.
+modes, failed-save draft retention, persisted panel dimensions/placement and
+unfocused hide/remap. Two geometry unit tests cover drag reversals and recovery
+from boundaries.
+
+Real virtual-pointer tests have passed on an isolated headless Sway 1.12 output
+(1280×900, scale 1): continuous/reverse dragging, all boundaries, recovery,
+release, outside click-through to a second GTK window, inside click isolation,
+resize, hide/remap and process restart with restored geometry. Pointer input was
+sent only to the private test compositor. The normal-window GUI regression has also passed. These results do not establish cross-monitor or fractional
+scale behavior, or input behavior on other compositors.
+
+For private compositor tests, optional `WAYNOTE_GEOMETRY_LOG=/tmp/geometry`
+records the actual panel rectangle (`x y width height`, logical coordinates).
+It is disabled by default. Never inject test input into the working desktop.
 
 ## Isolated protocol prototype
 
@@ -98,7 +119,7 @@ Interactive checks still required before migrating the installed application:
 ## Later gates
 
 1. Complete interactive controller checks, including save-error and draft recovery.
-2. Refine drag feedback, display choice and safe layout recovery.
+2. Validate additional compositors, scale factors, display choice and hotplug recovery.
 3. Update the development runner and remove obsolete Hyprland helpers only after
    the replacement has passed interactive regression checks.
 4. Trial against isolated copied fixtures before a deliberate installed-app migration.

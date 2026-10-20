@@ -565,6 +565,10 @@ fn layer_gui_regressions() {
     pump();
     let window = this.borrow().window.clone();
     assert!(window.is_layer_window());
+    assert!(
+        window.is_anchor(Edge::Bottom),
+        "drag canvas must be stationary across the output"
+    );
     let id = this.borrow().active.clone().unwrap();
     Controller::edit(&this, &id, None);
     this.borrow().cards[&id]
@@ -595,34 +599,40 @@ fn layer_gui_regressions() {
     menu.popdown();
     pump();
     assert_eq!(window.keyboard_mode(), KeyboardMode::None);
-    let title = this.borrow().cards[&id].title.clone();
-    let controllers = title.observe_controllers();
-    let drag = (0..controllers.n_items())
-        .filter_map(|i| controllers.item(i))
-        .find_map(|o| o.downcast::<gtk::GestureDrag>().ok())
-        .unwrap();
-    let old_x = window.margin(Edge::Left);
-    drag.emit_by_name::<()>("drag-end", &[&20.0f64, &15.0f64]);
+    // A failed save must retain the edit buffer and prevent hiding the canvas.
+    Controller::edit(&this, &id, None);
+    let original_path = this.borrow().cards[&id].path.clone();
+    let blocked_parent = dir.path().join("not-a-directory");
+    std::fs::write(&blocked_parent, "block").unwrap();
+    {
+        let mut board = this.borrow_mut();
+        let card = board.cards.get_mut(&id).unwrap();
+        card.path = blocked_parent.join("note.md");
+        card.editor.buffer().set_text("Draft survives failed save");
+        assert!(!board.hide());
+        assert!(board.window.is_visible());
+        assert!(board.cards[&id].editing());
+        assert_eq!(board.cards[&id].raw(), "Draft survives failed save");
+        assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+        board.cards.get_mut(&id).unwrap().path = original_path;
+        assert!(board.finish_edit());
+    }
     pump();
-    assert_eq!(window.margin(Edge::Left), old_x + 20);
-    let grip = window.child().unwrap().last_child().unwrap();
-    let controllers = grip.observe_controllers();
-    let resize = (0..controllers.n_items())
-        .filter_map(|i| controllers.item(i))
-        .find_map(|o| o.downcast::<gtk::GestureDrag>().ok())
-        .unwrap();
-    let before = (window.width(), window.height());
-    resize.emit_by_name::<()>("drag-begin", &[&0.0f64, &0.0f64]);
-    resize.emit_by_name::<()>("drag-update", &[&40.0f64, &30.0f64]);
+    // Real pointer motion is covered by the private-compositor integration test.
+    let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
+    assert!(window.width() > panel.width());
+    assert!(window.height() > panel.height());
+    panel.set_size_request(460, 480);
     pump();
-    assert_eq!(
-        (window.width(), window.height()),
-        (before.0 + 40, before.1 + 30)
-    );
-    window.set_margin(Edge::Left, 123);
+    let bounds = panel.compute_bounds(&window).unwrap();
     assert!(this.borrow_mut().hide());
     pump();
-    assert_eq!(layout::load(&this.borrow().paths).layer_x, 123);
+    let saved = layout::load(&this.borrow().paths);
+    assert_eq!((saved.width, saved.height), (panel.width(), panel.height()));
+    assert_eq!(
+        (saved.layer_x, saved.layer_y),
+        (bounds.x() as i32, bounds.y() as i32)
+    );
     Controller::show(&this);
     pump();
     assert!(window.is_mapped());

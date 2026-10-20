@@ -46,6 +46,7 @@ impl Card {
 
 pub struct Controller {
     window: gtk::ApplicationWindow,
+    layer: Option<layer_window::Panel>,
     pages: gtk::Stack,
     empty: gtk::Box,
     message: gtk::Label,
@@ -172,18 +173,19 @@ impl Controller {
             .decorated(false)
             .child(&content)
             .build();
-        layer_window::setup(&window, &state);
-        if layer_window::enabled() {
+        let layer = layer_window::Panel::attach(&window, &content, &state);
+        if let Some(layer) = &layer {
             let grip = gtk::Label::new(Some("◢"));
             grip.set_halign(gtk::Align::End);
             grip.set_tooltip_text(Some("Drag to resize"));
-            layer_window::resize(&window, &grip);
+            layer.resize(&grip);
             content.append(&grip);
         }
         window.add_css_class("waynote-window");
         let active = state.active.clone();
         let this = Rc::new(RefCell::new(Self {
             window,
+            layer,
             pages,
             empty,
             message,
@@ -526,7 +528,9 @@ impl Controller {
             });
             header.append(&hide);
             root.append(&header);
-            layer_window::drag(&self.window, &title);
+            if let Some(layer) = &self.layer {
+                layer.drag(&title);
+            }
             Self::watch_popup(&menu, &self.window, &self.weak);
         } else {
             let handle = gtk::WindowHandle::builder().child(&header).build();
@@ -1119,13 +1123,14 @@ impl Controller {
         }
     }
     fn save_state(&mut self) {
-        if self.window.width() > 0 && self.window.height() > 0 {
+        if let Some(layer) = &self.layer {
+            layer.save(&mut self.state);
+        } else if self.window.width() > 0 && self.window.height() > 0 {
             self.state.width = self.window.width().max(360);
             self.state.height = self.window.height().max(300);
             self.window
                 .set_default_size(self.state.width, self.state.height);
         }
-        layer_window::save(&self.window, &mut self.state);
         self.state.active = self.active.clone();
         if let Err(e) = layout::save(&self.paths, &self.state) {
             self.report(&format!("Cannot save window state: {e}"));

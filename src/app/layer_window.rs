@@ -1,5 +1,6 @@
-//! Optional native Layer Shell window behavior; no compositor IPC.
-use gtk::prelude::*;
+//! Stationary Layer Shell canvas with a movable, click-through note panel.
+use gtk::{glib, prelude::*};
+use std::{cell::Cell, rc::Rc};
 
 pub fn enabled() -> bool {
     cfg!(feature = "layer-shell-prototype")
@@ -24,84 +25,267 @@ pub fn keyboard(window: &gtk::ApplicationWindow, active: bool) {
     }
     let _ = (window, active);
 }
-pub fn setup(window: &gtk::ApplicationWindow, state: &crate::platform::layout::BoardState) {
-    #[cfg(feature = "layer-shell-prototype")]
-    if enabled() {
-        use gtk4_layer_shell::{Edge, Layer, LayerShell};
-        window.init_layer_shell();
-        window.set_namespace(Some("dev.mryll.waynote.layershell.development"));
-        window.set_layer(Layer::Top);
-        window.set_exclusive_zone(0);
-        window.set_anchor(Edge::Top, true);
-        window.set_anchor(Edge::Left, true);
-        window.set_margin(Edge::Left, state.layer_x.max(0));
-        window.set_margin(Edge::Top, state.layer_y.max(0));
+
+fn position(
+    origin: (f64, f64),
+    start: (f64, f64),
+    pointer: (f64, f64),
+    bounds: (f64, f64),
+) -> (f64, f64) {
+    (
+        (origin.0 + pointer.0 - start.0).clamp(0.0, bounds.0.max(0.0)),
+        (origin.1 + pointer.1 - start.1).clamp(0.0, bounds.1.max(0.0)),
+    )
+}
+
+pub struct Panel {
+    pub widget: gtk::Box,
+    canvas: gtk::Fixed,
+    location: Rc<Cell<(f64, f64)>>,
+}
+impl Panel {
+    pub fn attach(
+        window: &gtk::ApplicationWindow,
+        widget: &gtk::Box,
+        state: &crate::platform::layout::BoardState,
+    ) -> Option<Self> {
+        if !enabled() {
+            return None;
+        }
+        #[cfg(feature = "layer-shell-prototype")]
+        {
+            use gtk4_layer_shell::{Edge, Layer, LayerShell};
+            window.init_layer_shell();
+            window.set_namespace(Some("dev.mryll.waynote.layershell.development"));
+            window.set_layer(Layer::Top);
+            window.set_exclusive_zone(0);
+            for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+                window.set_anchor(edge, true);
+            }
+        }
         keyboard(window, false);
-    }
-    let _ = (window, state);
-}
-pub fn save(window: &gtk::ApplicationWindow, state: &mut crate::platform::layout::BoardState) {
-    #[cfg(feature = "layer-shell-prototype")]
-    if enabled() {
-        use gtk4_layer_shell::{Edge, LayerShell};
-        state.layer_x = window.margin(Edge::Left);
-        state.layer_y = window.margin(Edge::Top);
-    }
-    let _ = (window, state);
-}
-/// Commit movement on release: local gesture coordinates stay stable throughout the drag.
-pub fn drag(window: &gtk::ApplicationWindow, title: &gtk::Label) {
-    #[cfg(feature = "layer-shell-prototype")]
-    if enabled() {
-        use gtk4_layer_shell::{Edge, LayerShell};
-        let gesture = gtk::GestureDrag::new();
-        gesture.set_button(1);
-        let weak = window.downgrade();
-        gesture.connect_drag_end(move |_, dx, dy| {
-            if let Some(window) = weak.upgrade() {
-                let monitor = window
-                    .surface()
-                    .and_then(|s| gtk::prelude::WidgetExt::display(&window).monitor_at_surface(&s));
-                let bounds = monitor.map(|m| m.geometry());
-                let max_x = bounds
-                    .as_ref()
-                    .map_or(i32::MAX, |r| (r.width() - window.width()).max(0));
-                let max_y = bounds
-                    .as_ref()
-                    .map_or(i32::MAX, |r| (r.height() - window.height()).max(0));
-                window.set_margin(
-                    Edge::Left,
-                    (window.margin(Edge::Left) + dx as i32).clamp(0, max_x),
-                );
-                window.set_margin(
-                    Edge::Top,
-                    (window.margin(Edge::Top) + dy as i32).clamp(0, max_y),
-                );
+        let css = gtk::CssProvider::new();
+        css.load_from_data("window.waynote-canvas { background: transparent; box-shadow: none; }");
+        gtk::style_context_add_provider_for_display(
+            &WidgetExt::display(window),
+            &css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        window.add_css_class("waynote-canvas");
+        let canvas = gtk::Fixed::new();
+        window.set_child(None::<&gtk::Widget>);
+        widget.set_halign(gtk::Align::Start);
+        widget.set_valign(gtk::Align::Start);
+        widget.set_size_request(state.width.max(360), state.height.max(300));
+        let location = Rc::new(Cell::new((
+            state.layer_x.max(0) as f64,
+            state.layer_y.max(0) as f64,
+        )));
+        canvas.put(widget, location.get().0, location.get().1);
+        window.set_child(Some(&canvas));
+        let last_geometry = Rc::new(Cell::new(None));
+        let mapped_geometry = last_geometry.clone();
+        window.connect_map(move |w| {
+            mapped_geometry.set(None);
+            if let Some(surface) = w.surface() {
+                surface.set_input_region(Some(&gtk::cairo::Region::create()));
             }
         });
-        title.set_cursor_from_name(Some("move"));
+        let panel_weak = widget.downgrade();
+        let canvas_weak = canvas.downgrade();
+        let loc = location.clone();
+        let geometry_log = std::env::var_os("WAYNOTE_GEOMETRY_LOG");
+        window.add_tick_callback(move |window, _| {
+            let (Some(panel), Some(canvas)) = (panel_weak.upgrade(), canvas_weak.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            if canvas.width() <= 0 || panel.width() <= 0 {
+                return glib::ControlFlow::Continue;
+            }
+            // Recover when the output shrinks; GTK's natural minimum can still
+            // exceed an unusually small output, which is not a supported layout.
+            let requested = panel.size_request();
+            let size = (
+                requested.0.min(canvas.width()).max(360),
+                requested.1.min(canvas.height()).max(300),
+            );
+            if size != requested {
+                panel.set_size_request(size.0, size.1);
+            }
+            let next = position(
+                loc.get(),
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (
+                    (canvas.width() - panel.width()) as f64,
+                    (canvas.height() - panel.height()) as f64,
+                ),
+            );
+            if next != loc.get() {
+                loc.set(next);
+                canvas.move_(&panel, next.0, next.1);
+            }
+            // The input region must match the allocation already rendered, not
+            // the position queued by a drag or output resize in this frame.
+            if let (Some(surface), Some(rect)) = (window.surface(), panel.compute_bounds(window)) {
+                let geometry = (rect.x(), rect.y(), rect.width(), rect.height());
+                if last_geometry.get() != Some(geometry) {
+                    let x = rect.x().floor() as i32;
+                    let y = rect.y().floor() as i32;
+                    let region =
+                        gtk::cairo::Region::create_rectangle(&gtk::cairo::RectangleInt::new(
+                            x,
+                            y,
+                            (rect.x() + rect.width()).ceil() as i32 - x,
+                            (rect.y() + rect.height()).ceil() as i32 - y,
+                        ));
+                    surface.set_input_region(Some(&region));
+                    // GTK may have painted the final resize before this tick.
+                    // Queue a frame so Wayland commits the new input region
+                    // even when no more pointer motion or redraw follows.
+                    surface.queue_render();
+                    if let Some(path) = &geometry_log {
+                        use std::io::Write;
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(path)
+                        {
+                            let _ = writeln!(
+                                f,
+                                "{} {} {} {}",
+                                geometry.0, geometry.1, geometry.2, geometry.3
+                            );
+                        }
+                    }
+                    last_geometry.set(Some(geometry));
+                }
+            }
+            glib::ControlFlow::Continue
+        });
+        Some(Self {
+            widget: widget.clone(),
+            canvas,
+            location,
+        })
+    }
+    pub fn save(&self, state: &mut crate::platform::layout::BoardState) {
+        let (x, y) = self.location.get();
+        state.layer_x = x.round() as i32;
+        state.layer_y = y.round() as i32;
+        if self.widget.width() > 0 && self.widget.height() > 0 {
+            state.width = self.widget.width();
+            state.height = self.widget.height();
+        }
+    }
+    pub fn drag(&self, title: &gtk::Label) {
+        let gesture = gtk::GestureDrag::new();
+        gesture.set_button(1);
+        let start = Rc::new(Cell::new(None));
+        let begin = start.clone();
+        let loc = self.location.clone();
+        gesture.connect_drag_begin(move |g, _, _| {
+            begin.set(
+                g.current_event()
+                    .and_then(|e| e.position())
+                    .map(|p| (loc.get(), p)),
+            );
+        });
+        let origin = start.clone();
+        let loc = self.location.clone();
+        let panel = self.widget.downgrade();
+        let canvas = self.canvas.downgrade();
+        gesture.connect_drag_update(move |g, _, _| {
+            let Some((initial, pointer_start)) = origin.get() else {
+                return;
+            };
+            let Some(pointer) = g.current_event().and_then(|e| e.position()) else {
+                return;
+            };
+            let (Some(panel), Some(canvas)) = (panel.upgrade(), canvas.upgrade()) else {
+                return;
+            };
+            let next = position(
+                initial,
+                pointer_start,
+                pointer,
+                (
+                    (canvas.width() - panel.width()) as f64,
+                    (canvas.height() - panel.height()) as f64,
+                ),
+            );
+            loc.set(next);
+            canvas.move_(&panel, next.0, next.1);
+        });
+        gesture.connect_drag_end(move |_, _, _| start.set(None));
+        title.set_cursor_from_name(Some("grab"));
         title.add_controller(gesture);
     }
-    let _ = (window, title);
+    pub fn resize(&self, grip: &gtk::Label) {
+        let gesture = gtk::GestureDrag::new();
+        gesture.set_button(1);
+        let start = Rc::new(Cell::new(None));
+        let begin = start.clone();
+        let panel = self.widget.downgrade();
+        gesture.connect_drag_begin(move |g, _, _| {
+            begin.set(panel.upgrade().and_then(|p| {
+                g.current_event()
+                    .and_then(|e| e.position())
+                    .map(|pointer| ((p.width(), p.height()), pointer))
+            }));
+        });
+        let origin = start.clone();
+        let panel = self.widget.downgrade();
+        let canvas = self.canvas.downgrade();
+        let loc = self.location.clone();
+        gesture.connect_drag_update(move |g, _, _| {
+            let Some((size, pointer_start)) = origin.get() else {
+                return;
+            };
+            let Some(pointer) = g.current_event().and_then(|e| e.position()) else {
+                return;
+            };
+            let (Some(panel), Some(canvas)) = (panel.upgrade(), canvas.upgrade()) else {
+                return;
+            };
+            let max = (
+                (canvas.width() - loc.get().0 as i32).max(360),
+                (canvas.height() - loc.get().1 as i32).max(300),
+            );
+            panel.set_size_request(
+                (size.0 + (pointer.0 - pointer_start.0) as i32).clamp(360, max.0),
+                (size.1 + (pointer.1 - pointer_start.1) as i32).clamp(300, max.1),
+            );
+        });
+        gesture.connect_drag_end(move |_, _, _| start.set(None));
+        grip.set_cursor_from_name(Some("se-resize"));
+        grip.add_controller(gesture);
+    }
 }
-pub fn resize(window: &gtk::ApplicationWindow, grip: &gtk::Label) {
-    let gesture = gtk::GestureDrag::new();
-    gesture.set_button(1);
-    let start = std::rc::Rc::new(std::cell::Cell::new((400, 440)));
-    let weak = window.downgrade();
-    let origin = start.clone();
-    gesture.connect_drag_begin(move |_, _, _| {
-        if let Some(w) = weak.upgrade() {
-            origin.set((w.width(), w.height()));
+
+#[cfg(test)]
+mod tests {
+    use super::position;
+    #[test]
+    fn grab_offset_stays_constant_through_reversals() {
+        for pointer in [(600.25, 320.5), (450.0, 230.0), (425.25, 215.5)] {
+            let p = position((400.0, 200.0), (425.25, 215.5), pointer, (1000.0, 800.0));
+            assert_eq!((pointer.0 - p.0, pointer.1 - p.1), (25.25, 15.5));
         }
-    });
-    let weak = window.downgrade();
-    gesture.connect_drag_update(move |_, dx, dy| {
-        if let Some(w) = weak.upgrade() {
-            let (width, height) = start.get();
-            w.set_default_size((width + dx as i32).max(360), (height + dy as i32).max(300));
-        }
-    });
-    grip.set_cursor_from_name(Some("se-resize"));
-    grip.add_controller(gesture);
+    }
+    #[test]
+    fn edges_clamp_and_recover_without_accumulating_error() {
+        let origin = (400.0, 200.0);
+        let start = (420.0, 220.0);
+        assert_eq!(
+            position(origin, start, (-100.0, -100.0), (600.0, 400.0)),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            position(origin, start, (2000.0, 2000.0), (600.0, 400.0)),
+            (600.0, 400.0)
+        );
+        assert_eq!(position(origin, start, start, (600.0, 400.0)), origin);
+        assert_eq!(position(origin, start, start, (-1.0, -1.0)), (0.0, 0.0));
+    }
 }
