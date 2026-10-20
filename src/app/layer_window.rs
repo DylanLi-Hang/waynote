@@ -56,7 +56,8 @@ impl Panel {
         {
             use gtk4_layer_shell::{Edge, Layer, LayerShell};
             window.init_layer_shell();
-            window.set_namespace(Some("dev.mryll.waynote.layershell.development"));
+            let namespace = window.application().and_then(|app| app.application_id());
+            window.set_namespace(namespace.as_deref());
             window.set_layer(Layer::Top);
             window.set_exclusive_zone(0);
             for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {

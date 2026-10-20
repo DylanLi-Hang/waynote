@@ -22,7 +22,9 @@ fn main() -> glib::ExitCode {
         println!("waynote — Markdown notes\n\nUsage: waynote [summon|toggle|new|show-all|hide-all|preview|quit]\nBind Meta+N to `waynote summon`. A visible window always hides, regardless of focus.");
         return glib::ExitCode::SUCCESS;
     }
-    let id = if app::layer_window::enabled() {
+    let id = if app::layer_window::enabled()
+        && std::env::var("WAYNOTE_DEV").as_deref() == Ok("1")
+    {
         "dev.mryll.waynote.layershell.development"
     } else if std::env::var("WAYNOTE_DEV").as_deref() == Ok("1") {
         "dev.mryll.waynote.development"

@@ -1,7 +1,21 @@
 # Layer Shell migration and isolated development app
 
 Branch: `feature/layer-shell-window`. Layer Shell is opt-in; the installed app
-and its notes have not been migrated.
+and its notes are unchanged until explicitly running the installed Layer Shell package.
+
+## NixOS test package
+
+`packages.<system>.layer-shell` enables the Cargo feature, links gtk4-layer-shell,
+and wraps the binary with `WAYNOTE_LAYER_SHELL=1`. The default package remains
+an ordinary GTK window. The installed Layer Shell app uses `dev.mryll.waynote`
+and the normal note storage; the isolated runner retains its development ID/data.
+Quit the previous installed instance before launching the new package.
+
+Hyprland consumers should omit the ordinary window rule and call the Lua helper
+with its third argument `true`. Send `preview-outside` through `org.gtk.Actions`
+to `dev.mryll.waynote` at `/dev/mryll/waynote`, using `gdbus call --session`.
+This does not auto-start the app when it is absent. Disable the development
+bindings with `scripts/layer-hyprland disable` before testing system bindings.
 
 ## Native note interface
 

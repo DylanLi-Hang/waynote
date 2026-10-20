@@ -4,6 +4,8 @@
   pkg-config,
   wrapGAppsHook4,
   gtk4,
+  gtk4-layer-shell,
+  layerShell ? false,
 }:
 
 rustPlatform.buildRustPackage {
@@ -11,6 +13,10 @@ rustPlatform.buildRustPackage {
   version = (lib.importTOML ./Cargo.toml).package.version;
   src = lib.cleanSource ./.;
   cargoLock.lockFile = ./Cargo.lock;
+  buildFeatures = lib.optional layerShell "layer-shell-prototype";
+  preFixup = lib.optionalString layerShell ''
+    gappsWrapperArgs+=(--set WAYNOTE_LAYER_SHELL 1)
+  '';
 
   nativeBuildInputs = [
     pkg-config
@@ -19,7 +25,7 @@ rustPlatform.buildRustPackage {
 
   buildInputs = [
     gtk4
-  ];
+  ] ++ lib.optional layerShell gtk4-layer-shell;
 
   postInstall = ''
     install -Dm644 packaging/hyprland.lua $out/share/waynote/hyprland.lua

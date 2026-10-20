@@ -15,6 +15,7 @@
     {
       packages = forAllSystems (system: {
         default = nixpkgs.legacyPackages.${system}.callPackage ./package.nix { };
+        layer-shell = nixpkgs.legacyPackages.${system}.callPackage ./package.nix { layerShell = true; };
       });
 
       overlays.default = final: prev: {
