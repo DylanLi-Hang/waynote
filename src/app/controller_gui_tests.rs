@@ -617,6 +617,71 @@ fn layer_gui_regressions() {
     menu.popdown();
     pump();
     assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    // Optional private-compositor pointer regression. Never use a desktop seat.
+    if let Ok(probe) = std::env::var("WAYNOTE_TEST_POINTER") {
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+        assert!(std::env::var("XDG_RUNTIME_DIR")
+            .unwrap()
+            .starts_with("/tmp/waynote-focus-runtime-"));
+        let mut child = Command::new(probe)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut send = |command: &str| {
+            writeln!(input, "{command}").unwrap();
+            input.flush().unwrap();
+            let mut response = String::new();
+            output.read_line(&mut response).unwrap();
+            assert_eq!(response.trim(), "ok");
+            pump();
+        };
+        window.set_visible(false);
+        pump();
+        window.set_visible(true);
+        pump();
+        let preview = this.borrow().cards[&id].preview.child().unwrap();
+        let point = preview
+            .compute_point(&window, &gtk::graphene::Point::new(12.0, 12.0))
+            .unwrap();
+        send(&format!("move {} {}", point.x() as i32, point.y() as i32));
+        assert!(!window.is_active(), "Preview has no keyboard focus");
+        // Deliver the real second-press handler while pointer focus is inside
+        // but keyboard focus is still outside (Layer Shell None -> OnDemand).
+        let controllers = preview.observe_controllers();
+        let click = (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .filter_map(|item| item.downcast::<gtk::GestureClick>().ok())
+            .find(|gesture| gesture.button() == 1)
+            .unwrap();
+        click.emit_by_name::<()>("pressed", &[&2i32, &12.0f64, &12.0f64]);
+        pump();
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "double click enters Edit"
+        );
+        assert!(!window.is_active(), "keyboard focus has not arrived yet");
+        this.borrow_mut().preview_after_outside_click();
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "inside release must retain Edit before keyboard focus arrives"
+        );
+        send("move 1200 850");
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "hover away retains Edit"
+        );
+        this.borrow_mut().preview_after_outside_click();
+        assert!(
+            !this.borrow().cards[&id].editing(),
+            "outside release enters Preview"
+        );
+        drop(input);
+        assert!(child.wait().unwrap().success());
+    }
     // A click notification while a popup is open must not leave Edit.
     Controller::edit(&this, &id, None);
     popup.popup();

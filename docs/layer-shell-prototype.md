@@ -51,7 +51,9 @@ For click-outside Preview on Hyprland, run `./scripts/layer-hyprland enable`
 after starting the test app. This reuses `packaging/hyprland.lua` with three
 non-consuming left/right/middle release bindings. A D-Bus `preview-outside`
 action reuses the existing save/Preview path only for a visible, unfocused note
-with no open popup. Hover alone never sends this action. Layer surfaces are not
+with no open popup and the pointer outside its surface. Keyboard focus alone
+is insufficient: an inside double-click release can arrive before OnDemand
+focus is granted. Hover alone never sends this action. Layer surfaces are not
 normal Hyprland window-list entries, so the app checks focus itself.
 No raw input devices or additional device permissions are used.
 

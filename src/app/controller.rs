@@ -911,7 +911,20 @@ impl Controller {
     }
     /// Called only by the compositor's non-consuming mouse-release binding.
     pub(super) fn preview_after_outside_click(&mut self) {
-        if self.window.is_visible() && !self.window.is_active() && !self.popup_visible() {
+        // Preview has no keyboard focus. A double click enables OnDemand,
+        // but its release can arrive before the compositor grants focus.
+        // Pointer focus still identifies that release as inside the note.
+        let pointer_surface = WidgetExt::display(&self.window)
+            .default_seat()
+            .and_then(|seat| seat.pointer())
+            .and_then(|pointer| pointer.surface_at_position().0);
+        let pointer_inside =
+            pointer_surface.is_some_and(|surface| self.window.surface().as_ref() == Some(&surface));
+        if self.window.is_visible()
+            && !self.window.is_active()
+            && !self.popup_visible()
+            && !pointer_inside
+        {
             self.finish_edit();
         }
     }
