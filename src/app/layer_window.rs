@@ -102,10 +102,13 @@ impl Panel {
         widget.set_halign(gtk::Align::Start);
         widget.set_valign(gtk::Align::Start);
         widget.set_size_request(state.width.max(360), state.height.max(300));
-        let location = Rc::new(Cell::new((
+        // Never let a saved offset enlarge GtkFixed's initial minimum size.
+        // Restore only after the compositor has allocated the selected output.
+        let initial_position = Cell::new(Some((
             state.layer_x.max(0) as f64,
             state.layer_y.max(0) as f64,
         )));
+        let location = Rc::new(Cell::new((0.0, 0.0)));
         canvas.put(widget, location.get().0, location.get().1);
         window.set_child(Some(&canvas));
         let last_geometry = Rc::new(Cell::new(None));
@@ -129,13 +132,30 @@ impl Panel {
             }
             // Recover when the output shrinks; GTK's natural minimum can still
             // exceed an unusually small output, which is not a supported layout.
+            let output_size = (canvas.width(), canvas.height());
+            #[cfg(feature = "layer-shell-prototype")]
+            let output_size = current_monitor(window)
+                .map(|monitor| {
+                    let rect = monitor.geometry();
+                    (rect.width(), rect.height())
+                })
+                .unwrap_or(output_size);
             let requested = panel.size_request();
             let size = (
-                requested.0.min(canvas.width()).max(360),
-                requested.1.min(canvas.height()).max(300),
+                requested.0.min(output_size.0).max(360),
+                requested.1.min(output_size.1).max(300),
             );
             if size != requested {
                 panel.set_size_request(size.0, size.1);
+            }
+            let restoring = initial_position.get().is_some();
+            if restoring {
+                if (canvas.width(), canvas.height()) != output_size {
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some(initial) = initial_position.take() {
+                    loc.set(initial);
+                }
             }
             let next = position(
                 loc.get(),
@@ -146,7 +166,7 @@ impl Panel {
                     (canvas.height() - panel.height()) as f64,
                 ),
             );
-            if next != loc.get() {
+            if restoring || next != loc.get() {
                 loc.set(next);
                 canvas.move_(&panel, next.0, next.1);
             }

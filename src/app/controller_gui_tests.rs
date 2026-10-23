@@ -816,7 +816,11 @@ fn layer_transfer_gui_regressions() {
     layout::save(
         &paths,
         &layout::BoardState {
-            layer_monitor: monitors[0].connector().map(|s| s.to_string()),
+            width: 394,
+            height: 712,
+            layer_x: 2367,
+            layer_y: 688,
+            layer_monitor: monitors[1].connector().map(|s| s.to_string()),
             ..Default::default()
         },
     )
@@ -826,6 +830,18 @@ fn layer_transfer_gui_regressions() {
     pump();
     let window = this.borrow().window.clone();
     let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
+    let restored_rect = monitors[1].geometry();
+    assert_eq!(
+        (window.width(), window.height()),
+        (restored_rect.width(), restored_rect.height()),
+        "saved big-screen offsets must not enlarge the smaller output canvas"
+    );
+    let restored_bounds = panel.compute_bounds(&window).unwrap();
+    assert!(
+        restored_bounds.x() + restored_bounds.width() <= restored_rect.width() as f32
+            && restored_bounds.y() + restored_bounds.height() <= restored_rect.height() as f32,
+        "restored panel must be visible and reachable on the small screen"
+    );
     let id = this.borrow().active.clone().unwrap();
     let title = this.borrow().cards[&id].title.clone();
     let mut child = Command::new(std::env::var("WAYNOTE_TEST_POINTER").unwrap())
@@ -843,7 +859,7 @@ fn layer_transfer_gui_regressions() {
         assert_eq!(response.trim(), "ok");
         pump();
     };
-    for destination in [&monitors[1], &monitors[0], &monitors[1]] {
+    for destination in [&monitors[0], &monitors[1], &monitors[0]] {
         Controller::edit(&this, &id, None);
         this.borrow().cards[&id]
             .editor

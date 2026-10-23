@@ -1,6 +1,6 @@
 # Layer Shell migration and isolated development app
 
-Branch: `feature/layer-shell-window`. Layer Shell is opt-in; the installed app
+Branch: `develop`. Layer Shell is opt-in; the installed app
 and its notes are unchanged until explicitly running the installed Layer Shell package.
 
 ## NixOS test package
@@ -217,3 +217,11 @@ the old GtkFixed offset is cleared and the panel size is capped to the destinati
 placement waits for the new allocation so old output bounds cannot truncate it.
 Actual drags claim their gesture so they do not also trigger title-click Preview.
 No Hyprland IPC or input-device access is used for cross-screen movement.
+
+Saved large-output coordinates are restored only after the initial output-sized
+canvas allocation. Starting GtkFixed with a large saved offset can otherwise
+make its minimum size exceed the smaller screen, invalidating input geometry.
+The controller regression seeds the observed 394×712 panel at (2367,688) on a
+smaller output and checks both full-canvas size and panel reachability before
+exercising pointer input. Stable promotion requires the real-desktop acceptance
+gate in [development.md](development.md).
