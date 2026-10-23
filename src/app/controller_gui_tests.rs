@@ -679,6 +679,43 @@ fn layer_gui_regressions() {
             !this.borrow().cards[&id].editing(),
             "outside release enters Preview"
         );
+        // Check rendered allocation after EACH motion while the button remains
+        // held. A drag_end-only implementation must fail on the first move.
+        let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
+        let title = this.borrow().cards[&id].title.clone();
+        let origin = panel.compute_bounds(&window).unwrap();
+        let grab = title
+            .compute_point(&window, &gtk::graphene::Point::new(24.0, 12.0))
+            .unwrap();
+        let (sx, sy) = (grab.x().round() as i32, grab.y().round() as i32);
+        let max_x = (window.width() - panel.width()).max(0) as f32;
+        let max_y = (window.height() - panel.height()).max(0) as f32;
+        send(&format!("move {sx} {sy}"));
+        send("press");
+        for (x, y) in [
+            (sx + 80, sy + 40),
+            (sx + 160, sy + 80),
+            (sx + 60, sy + 20), // Reverse without releasing.
+            (1, 1),
+            (window.width() - 2, window.height() - 2),
+            (sx, sy), // Recover from clamping without accumulating drift.
+        ] {
+            send(&format!("move {x} {y}"));
+            let actual = panel.compute_bounds(&window).unwrap();
+            let expected = (
+                (origin.x() + (x - sx) as f32).clamp(0.0, max_x),
+                (origin.y() + (y - sy) as f32).clamp(0.0, max_y),
+            );
+            assert!(
+                (actual.x() - expected.0).abs() <= 1.0 && (actual.y() - expected.1).abs() <= 1.0,
+                "must follow before release at ({x}, {y}): expected {expected:?}, got {actual:?}"
+            );
+        }
+        send("release");
+        let released = panel.compute_bounds(&window).unwrap();
+        send(&format!("move {} {}", sx + 100, sy + 60));
+        let stopped = panel.compute_bounds(&window).unwrap();
+        assert_eq!(released, stopped, "hover after release must not move panel");
         drop(input);
         assert!(child.wait().unwrap().success());
     }
@@ -727,7 +764,7 @@ fn layer_gui_regressions() {
         assert!(board.finish_edit());
     }
     pump();
-    // Real pointer motion is covered by the private-compositor integration test.
+    // Real pointer motion is checked above when WAYNOTE_TEST_POINTER is supplied.
     let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
     assert!(window.width() > panel.width());
     assert!(window.height() > panel.height());
@@ -748,4 +785,208 @@ fn layer_gui_regressions() {
     assert_eq!(window.keyboard_mode(), KeyboardMode::None);
     assert!(!window.is_active());
     this.borrow_mut().hide();
+}
+
+#[cfg(feature = "layer-shell-prototype")]
+#[test]
+#[ignore = "requires private two-output Wayland compositor and virtual pointer"]
+fn layer_transfer_gui_regressions() {
+    use gtk4_layer_shell::{KeyboardMode, LayerShell};
+    use std::io::{BufRead, Write};
+    use std::process::{Command, Stdio};
+    assert!(std::env::var("XDG_RUNTIME_DIR")
+        .unwrap()
+        .starts_with("/tmp/waynote-focus-runtime-"));
+    std::env::set_var("WAYNOTE_LAYER_SHELL", "1");
+    gtk::init().unwrap();
+    let app = gtk::Application::builder()
+        .application_id("dev.mryll.waynote.transfer.test")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let display = gtk::gdk::Display::default().unwrap();
+    let mut monitors: Vec<_> = display
+        .monitors()
+        .iter::<gtk::gdk::Monitor>()
+        .map(Result::unwrap)
+        .collect();
+    monitors.sort_by_key(|m| (m.geometry().x(), m.geometry().y()));
+    assert_eq!(monitors.len(), 2);
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths::Paths::from_env(|_| Some(dir.path().to_string_lossy().into_owned()));
+    layout::save(
+        &paths,
+        &layout::BoardState {
+            layer_monitor: monitors[0].connector().map(|s| s.to_string()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let this = Controller::with_paths(&app, paths.clone());
+    Controller::show(&this);
+    pump();
+    let window = this.borrow().window.clone();
+    let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
+    let id = this.borrow().active.clone().unwrap();
+    let title = this.borrow().cards[&id].title.clone();
+    let mut child = Command::new(std::env::var("WAYNOTE_TEST_POINTER").unwrap())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut send = |command: &str| {
+        writeln!(input, "{command}").unwrap();
+        input.flush().unwrap();
+        let mut response = String::new();
+        output.read_line(&mut response).unwrap();
+        assert_eq!(response.trim(), "ok");
+        pump();
+    };
+    for destination in [&monitors[1], &monitors[0], &monitors[1]] {
+        Controller::edit(&this, &id, None);
+        this.borrow().cards[&id]
+            .editor
+            .buffer()
+            .set_text("# Cross-screen draft\n\nKeep this text.");
+        pump();
+        let source = window.monitor().unwrap();
+        let origin = panel.compute_bounds(&window).unwrap();
+        let point = title
+            .compute_point(&window, &gtk::graphene::Point::new(20.0, 12.0))
+            .unwrap();
+        let sx = source.geometry().x() + point.x().round() as i32;
+        let sy = source.geometry().y() + point.y().round() as i32;
+        let grab = (point.x() - origin.x(), point.y() - origin.y());
+        send(&format!("move {sx} {sy}"));
+        send("press");
+        send(&format!("move {} {}", sx + 60, sy + 30));
+        let moved = panel.compute_bounds(&window).unwrap();
+        assert!(
+            (moved.x() - (origin.x() + 60.0).min((window.width() - panel.width()) as f32)).abs()
+                <= 1.0,
+            "production title must follow before release"
+        );
+        let rect = destination.geometry();
+        // Drop near the destination's far edge to expose stale clamps and
+        // oversized GtkFixed minima when subsequently returning to a small output.
+        let x = rect.x() + rect.width() - 80;
+        let y = rect.y() + rect.height() - 80;
+        send(&format!("move {x} {y}"));
+        send("release");
+        pump();
+        assert_eq!(window.monitor().as_ref(), Some(destination));
+        assert_eq!(
+            (window.width(), window.height()),
+            (rect.width(), rect.height())
+        );
+        let actual = panel.compute_bounds(&window).unwrap();
+        let expected = (
+            ((x - rect.x()) as f32 - grab.0).clamp(0.0, (rect.width() - panel.width()) as f32),
+            ((y - rect.y()) as f32 - grab.1).clamp(0.0, (rect.height() - panel.height()) as f32),
+        );
+        assert!(
+            (actual.x() - expected.0).abs() <= 1.0 && (actual.y() - expected.1).abs() <= 1.0,
+            "destination: expected {expected:?}, got {actual:?}"
+        );
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "drag/remap must preserve Edit"
+        );
+        assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+        assert_eq!(
+            this.borrow().cards[&id].raw(),
+            "# Cross-screen draft\n\nKeep this text."
+        );
+        // Popovers, explicit Preview and saving still work after a transfer.
+        let menu = this.borrow().cards[&id].menu.clone();
+        menu.popup();
+        pump();
+        menu.popdown();
+        pump();
+        let point = title
+            .compute_point(&window, &gtk::graphene::Point::new(20.0, 12.0))
+            .unwrap();
+        send(&format!(
+            "move {} {}",
+            rect.x() + point.x().round() as i32,
+            rect.y() + point.y().round() as i32
+        ));
+        send("press");
+        send("release");
+        assert!(
+            !this.borrow().cards[&id].editing(),
+            "ordinary title click still enters Preview"
+        );
+        assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+        assert!(std::fs::read_to_string(&this.borrow().cards[&id].path)
+            .unwrap()
+            .contains("Keep this text."));
+        assert!(this.borrow_mut().hide());
+        pump();
+        let saved = layout::load(&paths);
+        assert_eq!(
+            saved.layer_monitor,
+            destination.connector().map(|s| s.to_string())
+        );
+        assert_eq!(
+            (saved.layer_x, saved.layer_y),
+            (actual.x().round() as i32, actual.y().round() as i32)
+        );
+        Controller::show(&this);
+        pump();
+        assert_eq!(window.monitor().as_ref(), Some(destination));
+    }
+    // Resize still receives real pointer events after repeated output remaps.
+    let grip = panel.last_child().unwrap();
+    let point = grip
+        .compute_point(
+            &window,
+            &gtk::graphene::Point::new((grip.width() / 2) as f32, (grip.height() / 2) as f32),
+        )
+        .unwrap();
+    let rect = window.monitor().unwrap().geometry();
+    let (sx, sy) = (
+        rect.x() + point.x().round() as i32,
+        rect.y() + point.y().round() as i32,
+    );
+    let size = (panel.width(), panel.height());
+    send(&format!("move {sx} {sy}"));
+    send("press");
+    send(&format!("move {} {}", sx - 30, sy - 30));
+    send("release");
+    assert_eq!(
+        (panel.width(), panel.height()),
+        ((size.0 - 30).max(360), (size.1 - 30).max(300))
+    );
+    // A new controller must restore the output as well as local coordinates.
+    assert!(this.borrow_mut().hide());
+    let saved = layout::load(&paths);
+    let restored = Controller::with_paths(&app, paths);
+    Controller::show(&restored);
+    pump();
+    let restored_window = restored.borrow().window.clone();
+    assert_eq!(
+        restored_window
+            .monitor()
+            .unwrap()
+            .connector()
+            .map(|s| s.to_string()),
+        saved.layer_monitor
+    );
+    let bounds = restored
+        .borrow()
+        .layer
+        .as_ref()
+        .unwrap()
+        .widget
+        .compute_bounds(&restored_window)
+        .unwrap();
+    assert_eq!(
+        (bounds.x().round() as i32, bounds.y().round() as i32),
+        (saved.layer_x, saved.layer_y)
+    );
+    restored.borrow_mut().hide();
+    drop(input);
+    assert!(child.wait().unwrap().success());
 }

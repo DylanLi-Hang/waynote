@@ -1,0 +1,9 @@
+[package]
+name = "wayland-input-prototype"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wayland-client = "0.31.14"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+

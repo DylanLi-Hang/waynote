@@ -10,6 +10,7 @@ pub struct BoardState {
     pub active: Option<String>,
     pub layer_x: i32,
     pub layer_y: i32,
+    pub layer_monitor: Option<String>,
 }
 impl Default for BoardState {
     fn default() -> Self {
@@ -19,6 +20,7 @@ impl Default for BoardState {
             active: None,
             layer_x: 80,
             layer_y: 80,
+            layer_monitor: None,
         }
     }
 }
@@ -50,10 +52,12 @@ mod tests {
             width: 1100,
             height: 700,
             active: Some("id".into()),
+            layer_monitor: Some("DP-1".into()),
             ..Default::default()
         };
         let loaded: BoardState = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
         assert_eq!(loaded.active, state.active);
+        assert_eq!(loaded.layer_monitor, state.layer_monitor);
         assert_eq!((loaded.width, loaded.height), (1100, 700));
     }
 }
