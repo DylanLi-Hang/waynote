@@ -1,6 +1,6 @@
 # Layer Shell migration and isolated development app
 
-Branch: `feature/layer-shell-window`. Layer Shell is opt-in; the installed app
+Branch: `develop`. Layer Shell is opt-in; the installed app
 and its notes are unchanged until explicitly running the installed Layer Shell package.
 
 ## NixOS test package
@@ -31,15 +31,18 @@ The header follows the pointer continuously while dragging, with a bottom-right
 resize grip and explicit Hide button. A transparent Layer Shell surface stays
 anchored to all four edges of the current output; only the note panel moves
 inside a GtkFixed. Surface-relative pointer coordinates avoid feedback from a
-moving widget. The GDK input region follows the panel's actual allocation, so
+moving widget. The canvas covers the full monitor, including space reserved by bars, to keep
+surface and monitor coordinates aligned. The GDK input region follows the panel's actual allocation, so
 outside clicks pass through. It starts empty on every map until layout is ready.
 Each region change schedules a render so the final resize region is committed
 even if the pointer stops and the note needs no further repaint.
 
-Position and size persistence stores panel geometry, never the output-sized
-surface. Drag and resize clamp to the current output; stored positions are
-clamped after layout. Monitor choice, cross-monitor dragging and hotplug
-migration remain unsupported/unverified. Very small outputs below the UI's
+Position and size persistence stores panel geometry and the monitor connector,
+never the output-sized surface. While held, dragging follows the pointer within
+the source output. Releasing over another output transfers the panel while
+preserving its grab offset. Resize remains local to the current output. Stored
+positions are clamped after layout; a missing saved monitor falls back to the
+compositor's output choice. Hotplug migration remains unverified. Very small outputs below the UI's
 natural minimum size are not supported.
 Preview uses keyboard mode None; editing and Notes/action popovers use OnDemand.
 Focus loss attempts to save but retains Edit, including on desktops where focus
@@ -74,8 +77,8 @@ Real virtual-pointer tests have passed on an isolated headless Sway 1.12 output
 (1280×900, scale 1): continuous/reverse dragging, all boundaries, recovery,
 release, outside click-through to a second GTK window, inside click isolation,
 resize, hide/remap and process restart with restored geometry. Pointer input was
-sent only to the private test compositor. The normal-window GUI regression has also passed. These results do not establish cross-monitor or fractional
-scale behavior, or input behavior on other compositors.
+sent only to the private test compositor. The normal-window GUI regression has also passed. Cross-monitor and fractional-scale regression coverage is described below;
+these results do not establish input behavior on other compositors.
 
 For private compositor tests, optional `WAYNOTE_GEOMETRY_LOG=/tmp/geometry`
 records the actual panel rectangle (`x y width height`, logical coordinates).
@@ -156,3 +159,69 @@ Interactive checks still required before migrating the installed application:
 3. Update the development runner and remove obsolete Hyprland helpers only after
    the replacement has passed interactive regression checks.
 4. Trial against isolated copied fixtures before a deliberate installed-app migration.
+
+## Repeatable continuous-drag regression
+
+Run `nix develop --command python3 scripts/test-layer-pointer.py` with `sway`
+on PATH (or set `WAYNOTE_TEST_SWAY` to its executable). This builds a test-only
+virtual pointer and runs `layer_gui_regressions` on a fresh 1280×900 headless
+output. Its private D-Bus session has no service activation directories, so the
+test cannot auto-start desktop portal services. It uses isolated note storage
+and terminates its compositor afterwards; artifacts remain under `/tmp`.
+
+The pointer test checks the rendered panel after every motion **before release**:
+forward motion, reversal, edge clamping, recovery to the original position, then
+no movement after release. Removing `drag_update` fails this regression even if
+`drag_end` eventually puts the panel at the correct destination. The optional
+`WAYNOTE_TEST_POINTER` block is skipped by GUI runs without the pointer helper;
+use this runner for drag acceptance. Cross-screen release-transfer is covered by the separate example suite below;
+the same transfer code is used by the installed Layer Shell application.
+
+
+## Release-transfer regression suite
+
+The manually confirmed demo is preserved as `examples/release-transfer.rs`.
+It imports the production `Panel` source, including transfer handling; the example
+contains no separate movement implementation. The runner also exercises the real
+Controller on every layout: Edit and draft retention, ordinary title-click Preview,
+menus, real-pointer resize, hide/show, and output/position restoration.
+
+Run from the checkout:
+
+```sh
+nix develop --command python3 scripts/test-release-transfer.py
+```
+
+Requires Sway on PATH, or `WAYNOTE_TEST_SWAY` pointing to its executable. The runner
+builds the example and private pointer helper, starts its own headless compositor
+and D-Bus session without portal activation, and cleans up its child processes.
+It never drives the real desktop pointer. Logs and geometry remain in printed
+`/tmp/waynote-*` artifact directories. GTK criticals abort the test process.
+
+| Regression | What must remain true |
+| --- | --- |
+| Continuous movement before release | Every forward/reverse motion changes the rendered panel while pressed; clamping recovers without grab-offset drift. |
+| Small → large, far-right drop | Destination position uses the new output allocation, never the previous small-screen boundary. |
+| Large → small after a far-right placement | The old GtkFixed child offset must not prevent the canvas from shrinking; placement completes within the test timeout. |
+| Vertical, offset screens with reserved bars | 3440×1440 above 1920×1200 at (760,1440), with 40px top bars, preserves global coordinates and completes transfer. |
+| Mixed scale | A 1.5-scale second output keeps logical-coordinate placement correct. |
+| Repeated round trip | Transfer, transfer back, and transfer again all settle; subsequent dragging still follows the pointer. |
+| Release cleanup | Hover after release does not move the panel; remapping during release must not produce GTK criticals. |
+
+Equal-size, unequal-width, mixed-scale, and vertical-with-bars scenarios run in
+separate compositor instances. These tests preserve the failures found during
+manual testing; they do not establish hotplug or arbitrary-compositor support.
+
+Transfer remaps are deferred until after GTK release dispatch. Before remapping,
+the old GtkFixed offset is cleared and the panel size is capped to the destination;
+placement waits for the new allocation so old output bounds cannot truncate it.
+Actual drags claim their gesture so they do not also trigger title-click Preview.
+No Hyprland IPC or input-device access is used for cross-screen movement.
+
+Saved large-output coordinates are restored only after the initial output-sized
+canvas allocation. Starting GtkFixed with a large saved offset can otherwise
+make its minimum size exceed the smaller screen, invalidating input geometry.
+The controller regression seeds the observed 394×712 panel at (2367,688) on a
+smaller output and checks both full-canvas size and panel reachability before
+exercising pointer input. Stable promotion requires the real-desktop acceptance
+gate in [development.md](development.md).

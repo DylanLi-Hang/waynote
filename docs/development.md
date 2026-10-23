@@ -73,8 +73,34 @@ floating and stacking policy belongs to the compositor; see the README.
 
 ## Layer Shell development
 
-The `feature/layer-shell-window` branch provides `./scripts/layer-dev` for the
+The `develop` branch provides `./scripts/layer-dev` for the
 real note interface using Layer Shell and isolated notes, plus a protocol probe.
 See [the migration guide](layer-shell-prototype.md) for launch commands, test
 scope and migration gates. The normal development runner above
 still exercises the existing regular-window application.
+
+## Develop acceptance before stable promotion
+
+`main` is stable. Runtime changes and their regression tests land on `develop`
+first. The cross-screen release was rolled back because headless tests did not
+cover existing large-screen geometry on a smaller screen and the actual resident
+process was still an older executable after the OS update.
+
+Before proposing promotion:
+
+1. Run unit tests, both controller GUI suites, Clippy, and the four-layout
+   `scripts/test-release-transfer.py` suite on develop. Include existing saved
+   positions/sizes, not just default fresh state.
+2. Start the production UI with isolated development notes/state on the real
+   desktop. Confirm its PID/executable is the build being tested. Rebuilding or
+   updating the system does not replace a resident process; another invocation
+   can merely send an action to that old process.
+3. Verify smaller/larger screens, reserved bars, title dragging, edit/Preview,
+   menus, resize, cross-screen round trips and restored state. Check that the
+   rendered panel and clickable region agree, including after startup.
+4. Wait for the user's explicit acceptance of develop and authorization to
+   promote. Only then merge develop into main and update the stable consumer pin.
+
+The isolated Layer Shell app uses `dev.mryll.waynote.layershell.development`.
+Do not terminate the installed instance or modify its notes just to test a build.
+A normal Quit must be allowed to flush drafts; do not force-kill around save errors.

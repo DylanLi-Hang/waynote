@@ -26,6 +26,16 @@ pub fn keyboard(window: &gtk::ApplicationWindow, active: bool) {
     let _ = (window, active);
 }
 
+#[cfg(feature = "layer-shell-prototype")]
+fn current_monitor(window: &gtk::ApplicationWindow) -> Option<gtk::gdk::Monitor> {
+    use gtk4_layer_shell::LayerShell;
+    window.monitor().or_else(|| {
+        window
+            .surface()
+            .and_then(|surface| WidgetExt::display(window).monitor_at_surface(&surface))
+    })
+}
+
 fn position(
     origin: (f64, f64),
     start: (f64, f64),
@@ -38,7 +48,10 @@ fn position(
     )
 }
 
+#[derive(Clone)]
 pub struct Panel {
+    window: glib::WeakRef<gtk::ApplicationWindow>,
+    pending: Rc<Cell<Option<(f64, f64)>>>,
     pub widget: gtk::Box,
     canvas: gtk::Fixed,
     location: Rc<Cell<(f64, f64)>>,
@@ -59,7 +72,18 @@ impl Panel {
             let namespace = window.application().and_then(|app| app.application_id());
             window.set_namespace(namespace.as_deref());
             window.set_layer(Layer::Top);
-            window.set_exclusive_zone(0);
+            // Pointer coordinates and saved positions use the full monitor origin,
+            // including desktops with bars reserving part of the work area.
+            window.set_exclusive_zone(-1);
+            if let Some(connector) = &state.layer_monitor {
+                let display = WidgetExt::display(window);
+                let monitor = display
+                    .monitors()
+                    .iter::<gtk::gdk::Monitor>()
+                    .filter_map(Result::ok)
+                    .find(|m| m.connector().as_deref() == Some(connector.as_str()));
+                window.set_monitor(monitor.as_ref());
+            }
             for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
                 window.set_anchor(edge, true);
             }
@@ -78,10 +102,13 @@ impl Panel {
         widget.set_halign(gtk::Align::Start);
         widget.set_valign(gtk::Align::Start);
         widget.set_size_request(state.width.max(360), state.height.max(300));
-        let location = Rc::new(Cell::new((
+        // Never let a saved offset enlarge GtkFixed's initial minimum size.
+        // Restore only after the compositor has allocated the selected output.
+        let initial_position = Cell::new(Some((
             state.layer_x.max(0) as f64,
             state.layer_y.max(0) as f64,
         )));
+        let location = Rc::new(Cell::new((0.0, 0.0)));
         canvas.put(widget, location.get().0, location.get().1);
         window.set_child(Some(&canvas));
         let last_geometry = Rc::new(Cell::new(None));
@@ -105,13 +132,30 @@ impl Panel {
             }
             // Recover when the output shrinks; GTK's natural minimum can still
             // exceed an unusually small output, which is not a supported layout.
+            let output_size = (canvas.width(), canvas.height());
+            #[cfg(feature = "layer-shell-prototype")]
+            let output_size = current_monitor(window)
+                .map(|monitor| {
+                    let rect = monitor.geometry();
+                    (rect.width(), rect.height())
+                })
+                .unwrap_or(output_size);
             let requested = panel.size_request();
             let size = (
-                requested.0.min(canvas.width()).max(360),
-                requested.1.min(canvas.height()).max(300),
+                requested.0.min(output_size.0).max(360),
+                requested.1.min(output_size.1).max(300),
             );
             if size != requested {
                 panel.set_size_request(size.0, size.1);
+            }
+            let restoring = initial_position.get().is_some();
+            if restoring {
+                if (canvas.width(), canvas.height()) != output_size {
+                    return glib::ControlFlow::Continue;
+                }
+                if let Some(initial) = initial_position.take() {
+                    loc.set(initial);
+                }
             }
             let next = position(
                 loc.get(),
@@ -122,7 +166,7 @@ impl Panel {
                     (canvas.height() - panel.height()) as f64,
                 ),
             );
-            if next != loc.get() {
+            if restoring || next != loc.get() {
                 loc.set(next);
                 canvas.move_(&panel, next.0, next.1);
             }
@@ -165,13 +209,20 @@ impl Panel {
             glib::ControlFlow::Continue
         });
         Some(Self {
+            window: window.downgrade(),
+            pending: Rc::new(Cell::new(None)),
             widget: widget.clone(),
             canvas,
             location,
         })
     }
     pub fn save(&self, state: &mut crate::platform::layout::BoardState) {
-        let (x, y) = self.location.get();
+        let (x, y) = self.pending.get().unwrap_or(self.location.get());
+        #[cfg(feature = "layer-shell-prototype")]
+        if let Some(window) = self.window.upgrade() {
+            state.layer_monitor =
+                current_monitor(&window).and_then(|m| m.connector().map(|s| s.to_string()));
+        }
         state.layer_x = x.round() as i32;
         state.layer_y = y.round() as i32;
         if self.widget.width() > 0 && self.widget.height() > 0 {
@@ -215,12 +266,127 @@ impl Panel {
                     (canvas.height() - panel.height()) as f64,
                 ),
             );
+            // A real drag must not also activate the title's click-to-Preview.
+            if (pointer.0 - pointer_start.0).abs() > 8.0
+                || (pointer.1 - pointer_start.1).abs() > 8.0
+            {
+                g.set_state(gtk::EventSequenceState::Claimed);
+            }
             loc.set(next);
             canvas.move_(&panel, next.0, next.1);
         });
-        gesture.connect_drag_end(move |_, _, _| start.set(None));
+        let widget = self.widget.downgrade();
+        let canvas = self.canvas.downgrade();
+        let window = self.window.clone();
+        let location = self.location.clone();
+        let pending = self.pending.clone();
+        gesture.connect_drag_end(move |g, _, _| {
+            let Some((initial, pointer_start)) = start.take() else {
+                return;
+            };
+            let Some(pointer) = g.current_event().and_then(|e| e.position()) else {
+                return;
+            };
+            let (Some(widget), Some(canvas)) = (widget.upgrade(), canvas.upgrade()) else {
+                return;
+            };
+            let panel = Panel {
+                widget,
+                canvas,
+                window: window.clone(),
+                location: location.clone(),
+                pending: pending.clone(),
+            };
+            panel.transfer(
+                pointer,
+                (pointer_start.0 - initial.0, pointer_start.1 - initial.1),
+            );
+        });
         title.set_cursor_from_name(Some("grab"));
         title.add_controller(gesture);
+    }
+    fn transfer(&self, pointer: (f64, f64), grab: (f64, f64)) {
+        #[cfg(feature = "layer-shell-prototype")]
+        {
+            let Some(window) = self.window.upgrade() else {
+                return;
+            };
+            let Some(source) = current_monitor(&window) else {
+                return;
+            };
+            let rect = source.geometry();
+            let global = (rect.x() as f64 + pointer.0, rect.y() as f64 + pointer.1);
+            let destination = WidgetExt::display(&window)
+                .monitors()
+                .iter::<gtk::gdk::Monitor>()
+                .filter_map(Result::ok)
+                .find(|m| {
+                    let r = m.geometry();
+                    m.is_valid()
+                        && global.0 >= r.x() as f64
+                        && global.0 < (r.x() + r.width()) as f64
+                        && global.1 >= r.y() as f64
+                        && global.1 < (r.y() + r.height()) as f64
+                });
+            let Some(destination) = destination.filter(|m| m != &source) else {
+                return;
+            };
+            let rect = destination.geometry();
+            let target = (
+                global.0 - rect.x() as f64 - grab.0,
+                global.1 - rect.y() as f64 - grab.1,
+            );
+            let panel = self.clone();
+            // Remapping during GTK's release dispatch invalidates native widgets.
+            glib::idle_add_local_once(move || panel.relocate(&destination, target));
+        }
+        let _ = (pointer, grab);
+    }
+    #[cfg(feature = "layer-shell-prototype")]
+    fn relocate(&self, monitor: &gtk::gdk::Monitor, target: (f64, f64)) {
+        use gtk4_layer_shell::LayerShell;
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if !monitor.is_valid() {
+            return;
+        }
+        let rect = monitor.geometry();
+        self.pending.set(Some(target));
+        // A GtkFixed child's old offset/size can prevent the canvas shrinking.
+        self.location.set((0.0, 0.0));
+        self.canvas.move_(&self.widget, 0.0, 0.0);
+        self.widget.set_size_request(
+            self.widget.width().min(rect.width()).max(360),
+            self.widget.height().min(rect.height()).max(300),
+        );
+        window.set_monitor(Some(monitor));
+        let panel = self.clone();
+        let monitor = monitor.clone();
+        window.add_tick_callback(move |_, _| {
+            if !monitor.is_valid() {
+                panel.pending.set(None);
+                return glib::ControlFlow::Break;
+            }
+            let rect = monitor.geometry();
+            // The first frame after remap still has the source allocation.
+            if panel.canvas.width() != rect.width() || panel.canvas.height() != rect.height() {
+                return glib::ControlFlow::Continue;
+            }
+            let next = position(
+                target,
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (
+                    (panel.canvas.width() - panel.widget.width()) as f64,
+                    (panel.canvas.height() - panel.widget.height()) as f64,
+                ),
+            );
+            panel.location.set(next);
+            panel.canvas.move_(&panel.widget, next.0, next.1);
+            panel.pending.set(None);
+            glib::ControlFlow::Break
+        });
     }
     pub fn resize(&self, grip: &gtk::Label) {
         let gesture = gtk::GestureDrag::new();
