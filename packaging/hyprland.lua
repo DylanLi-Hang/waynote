@@ -1,9 +1,9 @@
 -- Optional Hyprland Lua integration. Cleanup removes only its own handles.
-return function(command, app_class)
+return function(command, app_class, layer_shell)
     command = command or "waynote preview"
     app_class = app_class or "dev.mryll.waynote"
     local last_position
-    local events = {
+    local events = layer_shell and {} or {
         hl.on("window.close", function(window)
             if window.class ~= app_class then return end
             last_position = window.floating and window.monitor and {
@@ -34,6 +34,9 @@ return function(command, app_class)
         bindings[#bindings + 1] = hl.bind(button, function()
             -- Release runs after the clicked window has received focus, even
             -- with follow-mouse enabled. Hover alone never invokes this handler.
+            -- Layer surfaces are not hl.get_windows() clients. The app checks
+            -- its own focus/popovers before reusing the regular Preview path.
+            if layer_shell then hl.exec_cmd(command); return end
             local active = hl.get_active_window()
             if not active or active.class == app_class then return end
             for _, window in ipairs(hl.get_windows()) do
@@ -44,7 +47,8 @@ return function(command, app_class)
             end
         end, {
             release = true, non_consuming = true, ignore_mods = true, transparent = true,
-            description = "Waynote: preview after outside click",
+            description = layer_shell and "Waynote Layer Shell: preview after outside click"
+                or "Waynote: preview after outside click",
         })
     end
     return function()

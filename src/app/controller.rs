@@ -1,4 +1,5 @@
 //! One resident window showing one selected note. GTK buffers hold unsaved drafts.
+use super::layer_window;
 use crate::{
     core::{id_policy::UlidGen, markdown, note::Note, reconcile::Known, theme},
     platform::{config, layout, paths, render, store, watcher},
@@ -45,6 +46,7 @@ impl Card {
 
 pub struct Controller {
     window: gtk::ApplicationWindow,
+    layer: Option<layer_window::Panel>,
     pages: gtk::Stack,
     empty: gtk::Box,
     message: gtk::Label,
@@ -171,10 +173,19 @@ impl Controller {
             .decorated(false)
             .child(&content)
             .build();
+        let layer = layer_window::Panel::attach(&window, &content, &state);
+        if let Some(layer) = &layer {
+            let grip = gtk::Label::new(Some("◢"));
+            grip.set_halign(gtk::Align::End);
+            grip.set_tooltip_text(Some("Drag to resize"));
+            layer.resize(&grip);
+            content.append(&grip);
+        }
         window.add_css_class("waynote-window");
         let active = state.active.clone();
         let this = Rc::new(RefCell::new(Self {
             window,
+            layer,
             pages,
             empty,
             message,
@@ -243,8 +254,48 @@ impl Controller {
             glib::Propagation::Proceed
         });
         this.borrow().window.add_controller(keys);
+        if layer_window::enabled() {
+            Self::watch_popup(
+                &this.borrow().selector_popover,
+                &this.borrow().window,
+                &Rc::downgrade(&this),
+            );
+            let weak = Rc::downgrade(&this);
+            this.borrow().window.connect_is_active_notify(move |_| {
+                defer(&weak, |this| {
+                    let mut board = this.borrow_mut();
+                    if !board.window.is_active() && !board.popup_visible() {
+                        // Focus can follow the pointer. Save without treating
+                        // focus loss as an explicit request to leave Edit.
+                        board.flush();
+                    }
+                });
+            });
+        }
         Self::start_watcher(&this);
         this
+    }
+
+    fn popup_visible(&self) -> bool {
+        self.selector_popover.is_visible() || self.cards.values().any(|c| c.menu.is_visible())
+    }
+    fn sync_keyboard(&self) {
+        let editing = self
+            .active
+            .as_ref()
+            .and_then(|id| self.cards.get(id))
+            .is_some_and(Card::editing);
+        layer_window::keyboard(&self.window, editing || self.popup_visible());
+    }
+    fn watch_popup(
+        popup: &gtk::Popover,
+        window: &gtk::ApplicationWindow,
+        weak: &Weak<RefCell<Self>>,
+    ) {
+        let window = window.clone();
+        popup.connect_show(move |_| layer_window::keyboard(&window, true));
+        let weak = weak.clone();
+        popup.connect_closed(move |_| defer(&weak, |this| this.borrow().sync_keyboard()));
     }
 
     fn report(&self, text: &str) {
@@ -469,8 +520,24 @@ impl Controller {
         header.append(&lock);
         header.append(&new);
         header.append(&menu_button);
-        let handle = gtk::WindowHandle::builder().child(&header).build();
-        root.append(&handle);
+        if layer_window::enabled() {
+            let hide = gtk::Button::with_label("Hide");
+            let weak = self.weak.clone();
+            hide.connect_clicked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.borrow_mut().hide();
+                }
+            });
+            header.append(&hide);
+            root.append(&header);
+            if let Some(layer) = &self.layer {
+                layer.drag(&title);
+            }
+            Self::watch_popup(&menu, &self.window, &self.weak);
+        } else {
+            let handle = gtk::WindowHandle::builder().child(&header).build();
+            root.append(&handle);
+        }
         title.set_tooltip_text(Some("Click to preview; drag to move"));
         let preview_click = gtk::GestureClick::new();
         preview_click.set_button(1);
@@ -842,6 +909,25 @@ impl Controller {
         }
         success
     }
+    /// Called only by the compositor's non-consuming mouse-release binding.
+    pub(super) fn preview_after_outside_click(&mut self) {
+        // Preview has no keyboard focus. A double click enables OnDemand,
+        // but its release can arrive before the compositor grants focus.
+        // Pointer focus still identifies that release as inside the note.
+        let pointer_surface = WidgetExt::display(&self.window)
+            .default_seat()
+            .and_then(|seat| seat.pointer())
+            .and_then(|pointer| pointer.surface_at_position().0);
+        let pointer_inside =
+            pointer_surface.is_some_and(|surface| self.window.surface().as_ref() == Some(&surface));
+        if self.window.is_visible()
+            && !self.window.is_active()
+            && !self.popup_visible()
+            && !pointer_inside
+        {
+            self.finish_edit();
+        }
+    }
     pub(super) fn finish_edit(&mut self) -> bool {
         let Some(id) = self.active.clone() else {
             return true;
@@ -860,6 +946,7 @@ impl Controller {
             card.root.remove_css_class("waynote-active");
         }
         self.render_card(&id);
+        self.sync_keyboard();
         true
     }
     fn edit(this: &Rc<RefCell<Self>>, id: &str, line: Option<i32>) {
@@ -877,6 +964,7 @@ impl Controller {
             if card.note.locked {
                 return;
             }
+            layer_window::keyboard(&board.window, true);
             card.stack.set_visible_child_name("edit");
             card.root.add_css_class("waynote-active");
             card.editor.clone()
@@ -1030,7 +1118,7 @@ impl Controller {
         };
         if let Some(id) = result {
             let window = this.borrow().window.clone();
-            window.present();
+            layer_window::show(&window);
             let weak = Rc::downgrade(this);
             defer(&weak, move |this| Self::edit(this, &id, None));
         }
@@ -1042,7 +1130,7 @@ impl Controller {
             board.initial = false;
             (board.window.clone(), first, board.cards.is_empty())
         };
-        window.present();
+        layer_window::show(&window);
         if first && empty {
             Self::create(this);
         }
@@ -1056,7 +1144,9 @@ impl Controller {
         }
     }
     fn save_state(&mut self) {
-        if self.window.width() > 0 && self.window.height() > 0 {
+        if let Some(layer) = &self.layer {
+            layer.save(&mut self.state);
+        } else if self.window.width() > 0 && self.window.height() > 0 {
             self.state.width = self.window.width().max(360);
             self.state.height = self.window.height().max(300);
             self.window

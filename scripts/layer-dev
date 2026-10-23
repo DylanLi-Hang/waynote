@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ ${WAYNOTE_DEV_SHELL:-} != 1 ]]; then
+  exec nix develop "$repo" --command env WAYNOTE_DEV_SHELL=1 bash "$repo/scripts/layer-dev" "$@"
+fi
+cd "$repo"
+export WAYNOTE_LAYER_SHELL=1 WAYNOTE_DEV=1 GDK_BACKEND=wayland
+export XDG_DATA_HOME="$repo/target/layer-dev/data"
+export XDG_STATE_HOME="$repo/target/layer-dev/state"
+export XDG_CONFIG_HOME="$repo/target/layer-dev/config"
+unset HYPRLAND_INSTANCE_SIGNATURE
+cargo build --locked --offline --features layer-shell-prototype
+exec target/debug/waynote "${@:-show-all}"

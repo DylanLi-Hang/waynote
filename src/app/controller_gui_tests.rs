@@ -545,3 +545,207 @@ fn board_gui_regressions() {
     assert_eq!(app.windows().len(), 1);
     this.borrow().window.destroy();
 }
+
+#[cfg(feature = "layer-shell-prototype")]
+#[test]
+#[ignore = "requires Wayland Layer Shell v4"]
+fn layer_gui_regressions() {
+    use gtk4_layer_shell::{Edge, KeyboardMode, LayerShell};
+    std::env::set_var("WAYNOTE_LAYER_SHELL", "1");
+    gtk::init().unwrap();
+    assert!(gtk4_layer_shell::is_supported());
+    let app = gtk::Application::builder()
+        .application_id("dev.mryll.waynote.layer.test")
+        .build();
+    app.register(None::<&gio::Cancellable>).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let paths = paths::Paths::from_env(|_| Some(dir.path().to_string_lossy().into_owned()));
+    let this = Controller::with_paths(&app, paths);
+    Controller::show(&this);
+    pump();
+    let window = this.borrow().window.clone();
+    assert!(window.is_layer_window());
+    assert!(
+        window.is_anchor(Edge::Bottom),
+        "drag canvas must be stationary across the output"
+    );
+    let id = this.borrow().active.clone().unwrap();
+    Controller::edit(&this, &id, None);
+    this.borrow().cards[&id]
+        .editor
+        .buffer()
+        .set_text("# Layer test\n\nSaved native note");
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    // Force inactivity independently of compositor focus policy. This bypasses
+    // Controller::hide(), which intentionally finishes editing.
+    window.set_visible(false);
+    pump();
+    assert!(!window.is_active());
+    window.notify("is-active");
+    pump();
+    assert!(
+        this.borrow().cards[&id].editing(),
+        "focus loss must retain Edit"
+    );
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    assert!(std::fs::read_to_string(&this.borrow().cards[&id].path)
+        .unwrap()
+        .contains("Saved native note"));
+    window.set_visible(true);
+    pump();
+    assert!(this.borrow().cards[&id].editing());
+    assert!(this.borrow_mut().finish_edit());
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    assert!(std::fs::read_to_string(&this.borrow().cards[&id].path)
+        .unwrap()
+        .contains("Saved native note"));
+    let popup = this.borrow().selector_popover.clone();
+    popup.popup();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    this.borrow().search.set_text("Layer test");
+    pump();
+    assert!(this.borrow().selector.first_child().is_some());
+    popup.popdown();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    let menu = this.borrow().cards[&id].menu.clone();
+    menu.popup();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+    menu.popdown();
+    pump();
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    // Optional private-compositor pointer regression. Never use a desktop seat.
+    if let Ok(probe) = std::env::var("WAYNOTE_TEST_POINTER") {
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+        assert!(std::env::var("XDG_RUNTIME_DIR")
+            .unwrap()
+            .starts_with("/tmp/waynote-focus-runtime-"));
+        let mut child = Command::new(probe)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut input = child.stdin.take().unwrap();
+        let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+        let mut send = |command: &str| {
+            writeln!(input, "{command}").unwrap();
+            input.flush().unwrap();
+            let mut response = String::new();
+            output.read_line(&mut response).unwrap();
+            assert_eq!(response.trim(), "ok");
+            pump();
+        };
+        window.set_visible(false);
+        pump();
+        window.set_visible(true);
+        pump();
+        let preview = this.borrow().cards[&id].preview.child().unwrap();
+        let point = preview
+            .compute_point(&window, &gtk::graphene::Point::new(12.0, 12.0))
+            .unwrap();
+        send(&format!("move {} {}", point.x() as i32, point.y() as i32));
+        assert!(!window.is_active(), "Preview has no keyboard focus");
+        // Deliver the real second-press handler while pointer focus is inside
+        // but keyboard focus is still outside (Layer Shell None -> OnDemand).
+        let controllers = preview.observe_controllers();
+        let click = (0..controllers.n_items())
+            .filter_map(|index| controllers.item(index))
+            .filter_map(|item| item.downcast::<gtk::GestureClick>().ok())
+            .find(|gesture| gesture.button() == 1)
+            .unwrap();
+        click.emit_by_name::<()>("pressed", &[&2i32, &12.0f64, &12.0f64]);
+        pump();
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "double click enters Edit"
+        );
+        assert!(!window.is_active(), "keyboard focus has not arrived yet");
+        this.borrow_mut().preview_after_outside_click();
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "inside release must retain Edit before keyboard focus arrives"
+        );
+        send("move 1200 850");
+        assert!(
+            this.borrow().cards[&id].editing(),
+            "hover away retains Edit"
+        );
+        this.borrow_mut().preview_after_outside_click();
+        assert!(
+            !this.borrow().cards[&id].editing(),
+            "outside release enters Preview"
+        );
+        drop(input);
+        assert!(child.wait().unwrap().success());
+    }
+    // A click notification while a popup is open must not leave Edit.
+    Controller::edit(&this, &id, None);
+    popup.popup();
+    pump();
+    this.borrow_mut().preview_after_outside_click();
+    assert!(this.borrow().cards[&id].editing());
+    popup.popdown();
+    pump();
+    // Focus loss/hover alone retains Edit (checked above). Only the explicit
+    // compositor click notification takes the existing save/Preview path.
+    window.set_visible(false);
+    pump();
+    this.borrow_mut().preview_after_outside_click();
+    assert!(
+        this.borrow().cards[&id].editing(),
+        "Hidden notes ignore notifications"
+    );
+    window.set_visible(true);
+    pump();
+    assert!(
+        !window.is_active(),
+        "Run layer focus regressions in a private compositor"
+    );
+    this.borrow_mut().preview_after_outside_click();
+    assert!(!this.borrow().cards[&id].editing());
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    // A failed save must retain the edit buffer and prevent hiding the canvas.
+    Controller::edit(&this, &id, None);
+    let original_path = this.borrow().cards[&id].path.clone();
+    let blocked_parent = dir.path().join("not-a-directory");
+    std::fs::write(&blocked_parent, "block").unwrap();
+    {
+        let mut board = this.borrow_mut();
+        let card = board.cards.get_mut(&id).unwrap();
+        card.path = blocked_parent.join("note.md");
+        card.editor.buffer().set_text("Draft survives failed save");
+        assert!(!board.hide());
+        assert!(board.window.is_visible());
+        assert!(board.cards[&id].editing());
+        assert_eq!(board.cards[&id].raw(), "Draft survives failed save");
+        assert_eq!(window.keyboard_mode(), KeyboardMode::OnDemand);
+        board.cards.get_mut(&id).unwrap().path = original_path;
+        assert!(board.finish_edit());
+    }
+    pump();
+    // Real pointer motion is covered by the private-compositor integration test.
+    let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
+    assert!(window.width() > panel.width());
+    assert!(window.height() > panel.height());
+    panel.set_size_request(460, 480);
+    pump();
+    let bounds = panel.compute_bounds(&window).unwrap();
+    assert!(this.borrow_mut().hide());
+    pump();
+    let saved = layout::load(&this.borrow().paths);
+    assert_eq!((saved.width, saved.height), (panel.width(), panel.height()));
+    assert_eq!(
+        (saved.layer_x, saved.layer_y),
+        (bounds.x() as i32, bounds.y() as i32)
+    );
+    Controller::show(&this);
+    pump();
+    assert!(window.is_mapped());
+    assert_eq!(window.keyboard_mode(), KeyboardMode::None);
+    assert!(!window.is_active());
+    this.borrow_mut().hide();
+}

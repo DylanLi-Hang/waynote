@@ -107,5 +107,5 @@ Only `toggle` is needed for everyday use; creation is available in the note head
 
 [Developing and testing on NixOS](docs/development.md) documents the isolated
 runner. The implementation consists of a GTK window/controller, Markdown parser
-and renderer, and filesystem persistence/watcher. There is no layer-shell or
-tray dependency.
+and renderer, and filesystem persistence/watcher. The optional [Layer Shell package](docs/layer-shell-prototype.md) adds native
+floating panels; the default package remains an ordinary window. There is no tray dependency.
