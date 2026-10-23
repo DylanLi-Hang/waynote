@@ -156,3 +156,20 @@ Interactive checks still required before migrating the installed application:
 3. Update the development runner and remove obsolete Hyprland helpers only after
    the replacement has passed interactive regression checks.
 4. Trial against isolated copied fixtures before a deliberate installed-app migration.
+
+## Repeatable continuous-drag regression
+
+Run `nix develop --command python3 scripts/test-layer-pointer.py` with `sway`
+on PATH (or set `WAYNOTE_TEST_SWAY` to its executable). This builds a test-only
+virtual pointer and runs `layer_gui_regressions` on a fresh 1280×900 headless
+output. Its private D-Bus session has no service activation directories, so the
+test cannot auto-start desktop portal services. It uses isolated note storage
+and terminates its compositor afterwards; artifacts remain under `/tmp`.
+
+The pointer test checks the rendered panel after every motion **before release**:
+forward motion, reversal, edge clamping, recovery to the original position, then
+no movement after release. Removing `drag_update` fails this regression even if
+`drag_end` eventually puts the panel at the correct destination. The optional
+`WAYNOTE_TEST_POINTER` block is skipped by GUI runs without the pointer helper;
+use this runner for drag acceptance. Cross-screen release-transfer remains a
+separate scratch demo, not a feature of the installed application.

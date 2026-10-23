@@ -679,6 +679,43 @@ fn layer_gui_regressions() {
             !this.borrow().cards[&id].editing(),
             "outside release enters Preview"
         );
+        // Check rendered allocation after EACH motion while the button remains
+        // held. A drag_end-only implementation must fail on the first move.
+        let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
+        let title = this.borrow().cards[&id].title.clone();
+        let origin = panel.compute_bounds(&window).unwrap();
+        let grab = title
+            .compute_point(&window, &gtk::graphene::Point::new(24.0, 12.0))
+            .unwrap();
+        let (sx, sy) = (grab.x().round() as i32, grab.y().round() as i32);
+        let max_x = (window.width() - panel.width()).max(0) as f32;
+        let max_y = (window.height() - panel.height()).max(0) as f32;
+        send(&format!("move {sx} {sy}"));
+        send("press");
+        for (x, y) in [
+            (sx + 80, sy + 40),
+            (sx + 160, sy + 80),
+            (sx + 60, sy + 20), // Reverse without releasing.
+            (1, 1),
+            (window.width() - 2, window.height() - 2),
+            (sx, sy), // Recover from clamping without accumulating drift.
+        ] {
+            send(&format!("move {x} {y}"));
+            let actual = panel.compute_bounds(&window).unwrap();
+            let expected = (
+                (origin.x() + (x - sx) as f32).clamp(0.0, max_x),
+                (origin.y() + (y - sy) as f32).clamp(0.0, max_y),
+            );
+            assert!(
+                (actual.x() - expected.0).abs() <= 1.0 && (actual.y() - expected.1).abs() <= 1.0,
+                "must follow before release at ({x}, {y}): expected {expected:?}, got {actual:?}"
+            );
+        }
+        send("release");
+        let released = panel.compute_bounds(&window).unwrap();
+        send(&format!("move {} {}", sx + 100, sy + 60));
+        let stopped = panel.compute_bounds(&window).unwrap();
+        assert_eq!(released, stopped, "hover after release must not move panel");
         drop(input);
         assert!(child.wait().unwrap().success());
     }
@@ -727,7 +764,7 @@ fn layer_gui_regressions() {
         assert!(board.finish_edit());
     }
     pump();
-    // Real pointer motion is covered by the private-compositor integration test.
+    // Real pointer motion is checked above when WAYNOTE_TEST_POINTER is supplied.
     let panel = this.borrow().layer.as_ref().unwrap().widget.clone();
     assert!(window.width() > panel.width());
     assert!(window.height() > panel.height());
