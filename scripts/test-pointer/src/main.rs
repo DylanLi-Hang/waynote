@@ -55,6 +55,12 @@ impl Dispatch<ZwlrVirtualPointerV1, ()> for State {
 
 fn main() -> Result<(), Box<dyn Error>> {
     assert!(env::var("XDG_RUNTIME_DIR")?.starts_with("/tmp/waynote-focus-runtime-"));
+    let width = env::var("WAYNOTE_TEST_WIDTH")
+        .unwrap_or("1280".into())
+        .parse()?;
+    let height = env::var("WAYNOTE_TEST_HEIGHT")
+        .unwrap_or("900".into())
+        .parse()?;
     let connection = Connection::connect_to_env()?;
     let (globals, mut queue) = registry_queue_init::<State>(&connection)?;
     let qh = queue.handle();
@@ -65,7 +71,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let line = line?;
         let v: Vec<_> = line.split_whitespace().collect();
         match v[0] {
-            "move" => pointer.motion_absolute(timestamp(), v[1].parse()?, v[2].parse()?, 1280, 900),
+            "move" => {
+                pointer.motion_absolute(timestamp(), v[1].parse()?, v[2].parse()?, width, height)
+            }
             "press" => pointer.button(
                 timestamp(),
                 272,

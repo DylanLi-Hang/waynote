@@ -1,4 +1,4 @@
-//! Stationary Layer Shell canvas with a movable, click-through note panel.
+// Stationary Layer Shell canvas with a movable, click-through note panel.
 use gtk::{glib, prelude::*};
 use std::{cell::Cell, rc::Rc};
 

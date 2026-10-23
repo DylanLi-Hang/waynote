@@ -171,5 +171,40 @@ forward motion, reversal, edge clamping, recovery to the original position, then
 no movement after release. Removing `drag_update` fails this regression even if
 `drag_end` eventually puts the panel at the correct destination. The optional
 `WAYNOTE_TEST_POINTER` block is skipped by GUI runs without the pointer helper;
-use this runner for drag acceptance. Cross-screen release-transfer remains a
-separate scratch demo, not a feature of the installed application.
+use this runner for drag acceptance. Cross-screen release-transfer is covered by the separate example suite below;
+it is not yet a feature of the installed application.
+
+
+## Release-transfer regression suite
+
+The manually confirmed demo is preserved as `examples/release-transfer.rs`.
+It includes the production `Panel` source, so continuous dragging and input-region
+changes are exercised without a stale duplicate implementation. Transfer-specific
+code remains in the example; this does not enable cross-screen movement in the
+installed app.
+
+Run from the checkout:
+
+```sh
+nix develop --command python3 scripts/test-release-transfer.py
+```
+
+Requires Sway on PATH, or `WAYNOTE_TEST_SWAY` pointing to its executable. The runner
+builds the example and private pointer helper, starts its own headless compositor
+and D-Bus session without portal activation, and cleans up its child processes.
+It never drives the real desktop pointer. Logs and geometry remain in printed
+`/tmp/waynote-*` artifact directories. GTK criticals abort the test process.
+
+| Regression | What must remain true |
+| --- | --- |
+| Continuous movement before release | Every forward/reverse motion changes the rendered panel while pressed; clamping recovers without grab-offset drift. |
+| Small → large, far-right drop | Destination position uses the new output allocation, never the previous small-screen boundary. |
+| Large → small after a far-right placement | The old GtkFixed child offset must not prevent the canvas from shrinking; placement completes within the test timeout. |
+| Vertical, offset screens with reserved bars | 3440×1440 above 1920×1200 at (760,1440), with 40px top bars, preserves global coordinates and completes transfer. |
+| Mixed scale | A 1.5-scale second output keeps logical-coordinate placement correct. |
+| Repeated round trip | Transfer, transfer back, and transfer again all settle; subsequent dragging still follows the pointer. |
+| Release cleanup | Hover after release does not move the panel; remapping during release must not produce GTK criticals. |
+
+Equal-size, unequal-width, mixed-scale, and vertical-with-bars scenarios run in
+separate compositor instances. These tests preserve the failures found during
+manual testing; they do not establish hotplug or arbitrary-compositor support.
