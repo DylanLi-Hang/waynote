@@ -75,6 +75,13 @@ def main():
                     "layer-shell-prototype", "layer_gui_regressions", "--",
                     "--ignored", "--test-threads=1", "--nocapture",
                 ], cwd=repo, env=env, check=True, timeout=90)
+                # Keep the ordinary-window controller behavior covered as well.
+                normal_env = {**env, "WAYNOTE_LAYER_SHELL": "0"}
+                subprocess.run([
+                    "cargo", "test", "--locked", "--offline", "--features",
+                    "layer-shell-prototype", "board_gui_regressions", "--",
+                    "--ignored", "--test-threads=1", "--nocapture",
+                ], cwd=repo, env=normal_env, check=True, timeout=90)
             finally:
                 if compositor.poll() is None:
                     compositor.terminate()

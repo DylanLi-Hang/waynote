@@ -101,7 +101,6 @@ def scenario(name, output_config, extent, vertical=False):
                 nonlocal transfers
                 send("release")
                 transfers += 1
-                wait(lambda: log_text().count("SETTLED") == transfers, "destination allocation and placement")
                 check(x, y)
                 time.sleep(0.15)
 
@@ -160,7 +159,19 @@ def scenario(name, output_config, extent, vertical=False):
                 check(width - 360, 280)
             assert app.poll() is None, f"GTK critical/crash; see {artifacts}"
             assert "assertion" not in log_text() and "CRITICAL" not in log_text(), log_text()
-            print(f"PASS {name}", flush=True)
+            # Exercise the full production controller, not just the thin example.
+            probe.terminate(); probe.wait(timeout=3)
+            app.terminate(); app.wait(timeout=3)
+            if vertical:
+                env["DEMO_BARS_ONLY"] = "1"
+                launch([str(ROOT / "target/debug/examples/release-transfer")], "bars")
+                time.sleep(0.2)
+            env["WAYNOTE_TEST_POINTER"] = str(ROOT / "target/test-pointer/debug/wayland-input-prototype")
+            subprocess.run(["cargo", "test", "--locked", "--offline", "--features",
+                            "layer-shell-prototype", "layer_transfer_gui_regressions", "--",
+                            "--ignored", "--test-threads=1", "--nocapture"],
+                           cwd=ROOT, env=env, check=True, timeout=90)
+            print(f"PASS {name}: example + production controller", flush=True)
         finally:
             for process in reversed(processes):
                 if process.poll() is None:

@@ -31,15 +31,18 @@ The header follows the pointer continuously while dragging, with a bottom-right
 resize grip and explicit Hide button. A transparent Layer Shell surface stays
 anchored to all four edges of the current output; only the note panel moves
 inside a GtkFixed. Surface-relative pointer coordinates avoid feedback from a
-moving widget. The GDK input region follows the panel's actual allocation, so
+moving widget. The canvas covers the full monitor, including space reserved by bars, to keep
+surface and monitor coordinates aligned. The GDK input region follows the panel's actual allocation, so
 outside clicks pass through. It starts empty on every map until layout is ready.
 Each region change schedules a render so the final resize region is committed
 even if the pointer stops and the note needs no further repaint.
 
-Position and size persistence stores panel geometry, never the output-sized
-surface. Drag and resize clamp to the current output; stored positions are
-clamped after layout. Monitor choice, cross-monitor dragging and hotplug
-migration remain unsupported/unverified. Very small outputs below the UI's
+Position and size persistence stores panel geometry and the monitor connector,
+never the output-sized surface. While held, dragging follows the pointer within
+the source output. Releasing over another output transfers the panel while
+preserving its grab offset. Resize remains local to the current output. Stored
+positions are clamped after layout; a missing saved monitor falls back to the
+compositor's output choice. Hotplug migration remains unverified. Very small outputs below the UI's
 natural minimum size are not supported.
 Preview uses keyboard mode None; editing and Notes/action popovers use OnDemand.
 Focus loss attempts to save but retains Edit, including on desktops where focus
@@ -74,8 +77,8 @@ Real virtual-pointer tests have passed on an isolated headless Sway 1.12 output
 (1280×900, scale 1): continuous/reverse dragging, all boundaries, recovery,
 release, outside click-through to a second GTK window, inside click isolation,
 resize, hide/remap and process restart with restored geometry. Pointer input was
-sent only to the private test compositor. The normal-window GUI regression has also passed. These results do not establish cross-monitor or fractional
-scale behavior, or input behavior on other compositors.
+sent only to the private test compositor. The normal-window GUI regression has also passed. Cross-monitor and fractional-scale regression coverage is described below;
+these results do not establish input behavior on other compositors.
 
 For private compositor tests, optional `WAYNOTE_GEOMETRY_LOG=/tmp/geometry`
 records the actual panel rectangle (`x y width height`, logical coordinates).
@@ -172,16 +175,16 @@ no movement after release. Removing `drag_update` fails this regression even if
 `drag_end` eventually puts the panel at the correct destination. The optional
 `WAYNOTE_TEST_POINTER` block is skipped by GUI runs without the pointer helper;
 use this runner for drag acceptance. Cross-screen release-transfer is covered by the separate example suite below;
-it is not yet a feature of the installed application.
+the same transfer code is used by the installed Layer Shell application.
 
 
 ## Release-transfer regression suite
 
 The manually confirmed demo is preserved as `examples/release-transfer.rs`.
-It includes the production `Panel` source, so continuous dragging and input-region
-changes are exercised without a stale duplicate implementation. Transfer-specific
-code remains in the example; this does not enable cross-screen movement in the
-installed app.
+It imports the production `Panel` source, including transfer handling; the example
+contains no separate movement implementation. The runner also exercises the real
+Controller on every layout: Edit and draft retention, ordinary title-click Preview,
+menus, real-pointer resize, hide/show, and output/position restoration.
 
 Run from the checkout:
 
@@ -208,3 +211,9 @@ It never drives the real desktop pointer. Logs and geometry remain in printed
 Equal-size, unequal-width, mixed-scale, and vertical-with-bars scenarios run in
 separate compositor instances. These tests preserve the failures found during
 manual testing; they do not establish hotplug or arbitrary-compositor support.
+
+Transfer remaps are deferred until after GTK release dispatch. Before remapping,
+the old GtkFixed offset is cleared and the panel size is capped to the destination;
+placement waits for the new allocation so old output bounds cannot truncate it.
+Actual drags claim their gesture so they do not also trigger title-click Preview.
+No Hyprland IPC or input-device access is used for cross-screen movement.
