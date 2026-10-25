@@ -30,7 +30,8 @@ the application additionally requires `WAYNOTE_LAYER_SHELL=1` to enable it.
 The header follows the pointer continuously while dragging, with a bottom-right
 resize grip and explicit Hide button. A transparent Layer Shell surface stays
 anchored to all four edges of the current output; only the note panel moves
-inside a GtkFixed. Surface-relative pointer coordinates avoid feedback from a
+inside a clipped canvas whose minimum size does not depend on panel position.
+Surface-relative pointer coordinates avoid feedback from a
 moving widget. The canvas covers the full monitor, including space reserved by bars, to keep
 surface and monitor coordinates aligned. The GDK input region follows the panel's actual allocation, so
 outside clicks pass through. It starts empty on every map until layout is ready.
@@ -39,9 +40,13 @@ even if the pointer stops and the note needs no further repaint.
 
 Position and size persistence stores panel geometry and the monitor connector,
 never the output-sized surface. While held, dragging follows the pointer within
-the source output. Releasing over another output transfers the panel while
+the source output, allowing up to two thirds of the panel width beyond either
+side and two thirds of its height below the bottom edge. The top stays on-screen
+to retain the draggable title. Clipping hides overflow; the note does not span
+outputs. Releasing over another output transfers the panel while
 preserving its grab offset. Resize remains local to the current output. Stored
-positions are clamped after layout; a missing saved monitor falls back to the
+positions, including negative horizontal coordinates, are clamped to these same
+partial-visibility bounds after layout; a missing saved monitor falls back to the
 compositor's output choice. Hotplug migration remains unverified. Very small outputs below the UI's
 natural minimum size are not supported.
 Preview uses keyboard mode None; editing and Notes/action popovers use OnDemand.
@@ -206,6 +211,7 @@ It never drives the real desktop pointer. Logs and geometry remain in printed
 | Vertical, offset screens with reserved bars | 3440×1440 above 1920×1200 at (760,1440), with 40px top bars, preserves global coordinates and completes transfer. |
 | Mixed scale | A 1.5-scale second output keeps logical-coordinate placement correct. |
 | Repeated round trip | Transfer, transfer back, and transfer again all settle; subsequent dragging still follows the pointer. |
+| Partial visibility | Negative horizontal positions survive restore; a clipped panel can be dragged back by its visible title and never enlarges the output canvas. |
 | Release cleanup | Hover after release does not move the panel; remapping during release must not produce GTK criticals. |
 
 Equal-size, unequal-width, mixed-scale, and vertical-with-bars scenarios run in
@@ -213,7 +219,7 @@ separate compositor instances. These tests preserve the failures found during
 manual testing; they do not establish hotplug or arbitrary-compositor support.
 
 Transfer remaps are deferred until after GTK release dispatch. Before remapping,
-the old GtkFixed offset is cleared and the panel size is capped to the destination;
+the old panel offset is cleared and the panel size is capped to the destination;
 placement waits for the new allocation so old output bounds cannot truncate it.
 Actual drags claim their gesture so they do not also trigger title-click Preview.
 No Hyprland IPC or input-device access is used for cross-screen movement.

@@ -688,8 +688,8 @@ fn layer_gui_regressions() {
             .compute_point(&window, &gtk::graphene::Point::new(24.0, 12.0))
             .unwrap();
         let (sx, sy) = (grab.x().round() as i32, grab.y().round() as i32);
-        let max_x = (window.width() - panel.width()).max(0) as f32;
-        let max_y = (window.height() - panel.height()).max(0) as f32;
+        let max_x = window.width() as f32 - panel.width() as f32 / 3.0;
+        let max_y = window.height() as f32 - panel.height() as f32 / 3.0;
         send(&format!("move {sx} {sy}"));
         send("press");
         for (x, y) in [
@@ -703,7 +703,7 @@ fn layer_gui_regressions() {
             send(&format!("move {x} {y}"));
             let actual = panel.compute_bounds(&window).unwrap();
             let expected = (
-                (origin.x() + (x - sx) as f32).clamp(0.0, max_x),
+                (origin.x() + (x - sx) as f32).clamp(-panel.width() as f32 * 2.0 / 3.0, max_x),
                 (origin.y() + (y - sy) as f32).clamp(0.0, max_y),
             );
             assert!(
@@ -838,8 +838,9 @@ fn layer_transfer_gui_regressions() {
     );
     let restored_bounds = panel.compute_bounds(&window).unwrap();
     assert!(
-        restored_bounds.x() + restored_bounds.width() <= restored_rect.width() as f32
-            && restored_bounds.y() + restored_bounds.height() <= restored_rect.height() as f32,
+        restored_bounds.x() + restored_bounds.width() / 3.0 <= restored_rect.width() as f32 + 1.0
+            && restored_bounds.y() + restored_bounds.height() / 3.0
+                <= restored_rect.height() as f32 + 1.0,
         "restored panel must be visible and reachable on the small screen"
     );
     let id = this.borrow().active.clone().unwrap();
@@ -879,7 +880,9 @@ fn layer_transfer_gui_regressions() {
         send(&format!("move {} {}", sx + 60, sy + 30));
         let moved = panel.compute_bounds(&window).unwrap();
         assert!(
-            (moved.x() - (origin.x() + 60.0).min((window.width() - panel.width()) as f32)).abs()
+            (moved.x()
+                - (origin.x() + 60.0).min(window.width() as f32 - panel.width() as f32 / 3.0))
+            .abs()
                 <= 1.0,
             "production title must follow before release"
         );
@@ -898,8 +901,12 @@ fn layer_transfer_gui_regressions() {
         );
         let actual = panel.compute_bounds(&window).unwrap();
         let expected = (
-            ((x - rect.x()) as f32 - grab.0).clamp(0.0, (rect.width() - panel.width()) as f32),
-            ((y - rect.y()) as f32 - grab.1).clamp(0.0, (rect.height() - panel.height()) as f32),
+            ((x - rect.x()) as f32 - grab.0).clamp(
+                -panel.width() as f32 * 2.0 / 3.0,
+                rect.width() as f32 - panel.width() as f32 / 3.0,
+            ),
+            ((y - rect.y()) as f32 - grab.1)
+                .clamp(0.0, rect.height() as f32 - panel.height() as f32 / 3.0),
         );
         assert!(
             (actual.x() - expected.0).abs() <= 1.0 && (actual.y() - expected.1).abs() <= 1.0,
@@ -953,6 +960,21 @@ fn layer_transfer_gui_regressions() {
         pump();
         assert_eq!(window.monitor().as_ref(), Some(destination));
     }
+    // Recover the clipped right/bottom panel using the visible title before resize.
+    let rect = window.monitor().unwrap().geometry();
+    let point = title
+        .compute_point(&window, &gtk::graphene::Point::new(20.0, 12.0))
+        .unwrap();
+    send(&format!(
+        "move {} {}",
+        rect.x() + point.x().round() as i32,
+        rect.y() + point.y().round() as i32
+    ));
+    send("press");
+    send(&format!("move {} {}", rect.x() + 200, rect.y() + 150));
+    send("release");
+    let recovered = panel.compute_bounds(&window).unwrap();
+    assert!(recovered.x() < 200.0 && recovered.y() < 150.0);
     // Resize still receives real pointer events after repeated output remaps.
     let grip = panel.last_child().unwrap();
     let point = grip
@@ -975,7 +997,32 @@ fn layer_transfer_gui_regressions() {
         (panel.width(), panel.height()),
         ((size.0 - 30).max(360), (size.1 - 30).max(300))
     );
-    // A new controller must restore the output as well as local coordinates.
+    // Drag from the far end of the title to hide two thirds beyond the left edge.
+    let point = title
+        .compute_point(
+            &window,
+            &gtk::graphene::Point::new((title.width() - 8) as f32, 12.0),
+        )
+        .unwrap();
+    send(&format!(
+        "move {} {}",
+        rect.x() + point.x().round() as i32,
+        rect.y() + point.y().round() as i32
+    ));
+    send("press");
+    send(&format!("move {} {}", rect.x() + 1, rect.y() + 150));
+    send("release");
+    let clipped = panel.compute_bounds(&window).unwrap();
+    assert!(
+        clipped.x() < -100.0,
+        "left edge must allow negative coordinates: {clipped:?}"
+    );
+    assert!(clipped.x() >= -panel.width() as f32 * 2.0 / 3.0 - 1.0);
+    assert_eq!(
+        (window.width(), window.height()),
+        (rect.width(), rect.height())
+    );
+    // A new controller must restore the output as well as negative coordinates.
     assert!(this.borrow_mut().hide());
     let saved = layout::load(&paths);
     let restored = Controller::with_paths(&app, paths);
@@ -1001,6 +1048,35 @@ fn layer_transfer_gui_regressions() {
     assert_eq!(
         (bounds.x().round() as i32, bounds.y().round() as i32),
         (saved.layer_x, saved.layer_y)
+    );
+    // Negative restored geometry must have a matching, usable input region.
+    let restored_title = restored.borrow().cards[&id].title.clone();
+    let point = restored_title
+        .compute_point(
+            &restored_window,
+            &gtk::graphene::Point::new((restored_title.width() - 8) as f32, 12.0),
+        )
+        .unwrap();
+    assert!(point.x() >= 0.0, "a visible title segment must remain");
+    send(&format!(
+        "move {} {}",
+        rect.x() + point.x().round() as i32,
+        rect.y() + point.y().round() as i32
+    ));
+    send("press");
+    send(&format!("move {} {}", rect.x() + 600, rect.y() + 200));
+    send("release");
+    let recovered = restored
+        .borrow()
+        .layer
+        .as_ref()
+        .unwrap()
+        .widget
+        .compute_bounds(&restored_window)
+        .unwrap();
+    assert!(
+        recovered.x() > 0.0,
+        "restored clipped title must receive drag input"
     );
     restored.borrow_mut().hide();
     drop(input);

@@ -2,6 +2,42 @@
 use gtk::{glib, prelude::*};
 use std::{cell::Cell, rc::Rc};
 
+// A canvas has no content-derived minimum: panel overflow is clipped, never
+// allowed to enlarge the layer surface or change its pointer coordinate space.
+mod canvas_layout {
+    use super::*;
+    use gtk::subclass::prelude::*;
+    #[derive(Default)]
+    pub struct CanvasLayout {
+        pub location: Rc<Cell<(f64, f64)>>,
+    }
+    #[glib::object_subclass]
+    impl ObjectSubclass for CanvasLayout {
+        const NAME: &'static str = "WaynoteCanvasLayout";
+        type Type = super::CanvasLayout;
+        type ParentType = gtk::LayoutManager;
+    }
+    impl ObjectImpl for CanvasLayout {}
+    impl LayoutManagerImpl for CanvasLayout {
+        fn measure(&self, _: &gtk::Widget, _: gtk::Orientation, _: i32) -> (i32, i32, i32, i32) {
+            (0, 0, -1, -1)
+        }
+        fn allocate(&self, widget: &gtk::Widget, _: i32, _: i32, _: i32) {
+            if let Some(child) = widget.first_child() {
+                let (_, width, _, _) = child.measure(gtk::Orientation::Horizontal, -1);
+                let (_, height, _, _) = child.measure(gtk::Orientation::Vertical, width);
+                let (x, y) = self.location.get();
+                let transform = gtk::gsk::Transform::new()
+                    .translate(&gtk::graphene::Point::new(x as f32, y as f32));
+                child.allocate(width, height, -1, Some(transform));
+            }
+        }
+    }
+}
+glib::wrapper! {
+    pub struct CanvasLayout(ObjectSubclass<canvas_layout::CanvasLayout>) @extends gtk::LayoutManager;
+}
+
 pub fn enabled() -> bool {
     cfg!(feature = "layer-shell-prototype")
         && std::env::var("WAYNOTE_LAYER_SHELL").as_deref() == Ok("1")
@@ -41,10 +77,12 @@ fn position(
     start: (f64, f64),
     pointer: (f64, f64),
     bounds: (f64, f64),
+    size: (f64, f64),
 ) -> (f64, f64) {
     (
-        (origin.0 + pointer.0 - start.0).clamp(0.0, bounds.0.max(0.0)),
-        (origin.1 + pointer.1 - start.1).clamp(0.0, bounds.1.max(0.0)),
+        (origin.0 + pointer.0 - start.0)
+            .clamp(-size.0 * 2.0 / 3.0, (bounds.0 - size.0 / 3.0).max(0.0)),
+        (origin.1 + pointer.1 - start.1).clamp(0.0, (bounds.1 - size.1 / 3.0).max(0.0)),
     )
 }
 
@@ -53,7 +91,7 @@ pub struct Panel {
     window: glib::WeakRef<gtk::ApplicationWindow>,
     pending: Rc<Cell<Option<(f64, f64)>>>,
     pub widget: gtk::Box,
-    canvas: gtk::Fixed,
+    canvas: gtk::Box,
     location: Rc<Cell<(f64, f64)>>,
 }
 impl Panel {
@@ -97,19 +135,20 @@ impl Panel {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
         window.add_css_class("waynote-canvas");
-        let canvas = gtk::Fixed::new();
+        let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
         window.set_child(None::<&gtk::Widget>);
         widget.set_halign(gtk::Align::Start);
         widget.set_valign(gtk::Align::Start);
         widget.set_size_request(state.width.max(360), state.height.max(300));
-        // Never let a saved offset enlarge GtkFixed's initial minimum size.
+        // Restore saved offsets only after the output allocation is known.
         // Restore only after the compositor has allocated the selected output.
-        let initial_position = Cell::new(Some((
-            state.layer_x.max(0) as f64,
-            state.layer_y.max(0) as f64,
-        )));
-        let location = Rc::new(Cell::new((0.0, 0.0)));
-        canvas.put(widget, location.get().0, location.get().1);
+        let initial_position = Cell::new(Some((state.layer_x as f64, state.layer_y.max(0) as f64)));
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+        let layout: CanvasLayout = glib::Object::new();
+        let location = layout.imp().location.clone();
+        canvas.set_layout_manager(Some(layout));
+        canvas.set_overflow(gtk::Overflow::Hidden);
+        canvas.append(widget);
         window.set_child(Some(&canvas));
         let last_geometry = Rc::new(Cell::new(None));
         let mapped_geometry = last_geometry.clone();
@@ -161,14 +200,12 @@ impl Panel {
                 loc.get(),
                 (0.0, 0.0),
                 (0.0, 0.0),
-                (
-                    (canvas.width() - panel.width()) as f64,
-                    (canvas.height() - panel.height()) as f64,
-                ),
+                (canvas.width() as f64, canvas.height() as f64),
+                (panel.width() as f64, panel.height() as f64),
             );
             if restoring || next != loc.get() {
                 loc.set(next);
-                canvas.move_(&panel, next.0, next.1);
+                canvas.queue_allocate();
             }
             // The input region must match the allocation already rendered, not
             // the position queued by a drag or output resize in this frame.
@@ -261,10 +298,8 @@ impl Panel {
                 initial,
                 pointer_start,
                 pointer,
-                (
-                    (canvas.width() - panel.width()) as f64,
-                    (canvas.height() - panel.height()) as f64,
-                ),
+                (canvas.width() as f64, canvas.height() as f64),
+                (panel.width() as f64, panel.height() as f64),
             );
             // A real drag must not also activate the title's click-to-Preview.
             if (pointer.0 - pointer_start.0).abs() > 8.0
@@ -273,7 +308,7 @@ impl Panel {
                 g.set_state(gtk::EventSequenceState::Claimed);
             }
             loc.set(next);
-            canvas.move_(&panel, next.0, next.1);
+            canvas.queue_allocate();
         });
         let widget = self.widget.downgrade();
         let canvas = self.canvas.downgrade();
@@ -353,9 +388,9 @@ impl Panel {
         }
         let rect = monitor.geometry();
         self.pending.set(Some(target));
-        // A GtkFixed child's old offset/size can prevent the canvas shrinking.
+        // Reset placement while the new output allocation is pending.
         self.location.set((0.0, 0.0));
-        self.canvas.move_(&self.widget, 0.0, 0.0);
+        self.canvas.queue_allocate();
         self.widget.set_size_request(
             self.widget.width().min(rect.width()).max(360),
             self.widget.height().min(rect.height()).max(300),
@@ -377,13 +412,11 @@ impl Panel {
                 target,
                 (0.0, 0.0),
                 (0.0, 0.0),
-                (
-                    (panel.canvas.width() - panel.widget.width()) as f64,
-                    (panel.canvas.height() - panel.widget.height()) as f64,
-                ),
+                (panel.canvas.width() as f64, panel.canvas.height() as f64),
+                (panel.widget.width() as f64, panel.widget.height() as f64),
             );
             panel.location.set(next);
-            panel.canvas.move_(&panel.widget, next.0, next.1);
+            panel.canvas.queue_allocate();
             panel.pending.set(None);
             glib::ControlFlow::Break
         });
@@ -404,7 +437,6 @@ impl Panel {
         let origin = start.clone();
         let panel = self.widget.downgrade();
         let canvas = self.canvas.downgrade();
-        let loc = self.location.clone();
         gesture.connect_drag_update(move |g, _, _| {
             let Some((size, pointer_start)) = origin.get() else {
                 return;
@@ -415,10 +447,7 @@ impl Panel {
             let (Some(panel), Some(canvas)) = (panel.upgrade(), canvas.upgrade()) else {
                 return;
             };
-            let max = (
-                (canvas.width() - loc.get().0 as i32).max(360),
-                (canvas.height() - loc.get().1 as i32).max(300),
-            );
+            let max = (canvas.width().max(360), canvas.height().max(300));
             panel.set_size_request(
                 (size.0 + (pointer.0 - pointer_start.0) as i32).clamp(360, max.0),
                 (size.1 + (pointer.1 - pointer_start.1) as i32).clamp(300, max.1),
@@ -434,25 +463,26 @@ impl Panel {
 mod tests {
     use super::position;
     #[test]
-    fn grab_offset_stays_constant_through_reversals() {
-        for pointer in [(600.25, 320.5), (450.0, 230.0), (425.25, 215.5)] {
-            let p = position((400.0, 200.0), (425.25, 215.5), pointer, (1000.0, 800.0));
-            assert_eq!((pointer.0 - p.0, pointer.1 - p.1), (25.25, 15.5));
-        }
-    }
-    #[test]
-    fn edges_clamp_and_recover_without_accumulating_error() {
+    fn partial_edges_recover_without_drift_and_keep_title_visible() {
         let origin = (400.0, 200.0);
         let start = (420.0, 220.0);
+        let bounds = (1280.0, 900.0);
+        let size = (360.0, 300.0);
         assert_eq!(
-            position(origin, start, (-100.0, -100.0), (600.0, 400.0)),
-            (0.0, 0.0)
+            position(origin, start, (-1000.0, -1000.0), bounds, size),
+            (-240.0, 0.0)
         );
         assert_eq!(
-            position(origin, start, (2000.0, 2000.0), (600.0, 400.0)),
-            (600.0, 400.0)
+            position(origin, start, (2000.0, 2000.0), bounds, size),
+            (1160.0, 800.0)
         );
-        assert_eq!(position(origin, start, start, (600.0, 400.0)), origin);
-        assert_eq!(position(origin, start, start, (-1.0, -1.0)), (0.0, 0.0));
+        for pointer in [(600.25, 320.5), (450.0, 230.0), start] {
+            let p = position(origin, start, pointer, bounds, size);
+            assert_eq!((pointer.0 - p.0, pointer.1 - p.1), (20.0, 20.0));
+        }
+        assert_eq!(
+            position((-180.0, 700.0), (0.0, 0.0), (0.0, 0.0), bounds, size),
+            (-180.0, 700.0)
+        );
     }
 }

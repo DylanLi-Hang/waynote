@@ -109,7 +109,7 @@ def scenario(name, output_config, extent, vertical=False):
             send("press")
             for x, y in [(240, 180), (340, 220), (200, 160), (1, 1), (140, 140)]:
                 move(x, y)
-                check(max(0, x - 40), max(0, y - 40))
+                check(max(-240, x - 40), max(0, y - 40))
             if vertical:
                 # Actual desktop layout: big screen above smaller, offset screen.
                 # A 40px exclusive bar on each exposes monitor/work-area confusion.
@@ -122,10 +122,10 @@ def scenario(name, output_config, extent, vertical=False):
                     move(x, y)
                     check(x - 800, y - 1480)
                 move(3200, 600)
-                release_to(3080, 560)
+                release_to(3160, 560)
                 # Starting near the large screen's right edge used to prevent
                 # GtkFixed from shrinking on return to the smaller output.
-                move(3120, 600)
+                move(3200, 600)
                 send("press")
                 move(1500, 1800)
                 release_to(700, 320)
@@ -141,22 +141,22 @@ def scenario(name, output_config, extent, vertical=False):
                 far_x = extent[0] - 300
                 for x, y in [(700, 200), (1250, 240), (far_x, 320)]:
                     move(x, y)
-                    check(min(920, x - 40), y - 40)
+                    check(min(1160, x - 40), y - 40)
                 # Far-right destination must use the NEW width, not old 1280.
-                release_to(width - 360, 280)
-                grab_x = 1280 + width - 360 + 40
+                release_to(width - 340, 280)
+                grab_x = 1280 + width - 340 + 40
                 move(grab_x, 320)
                 send("press")
                 move(grab_x - 80, 360)
-                check(width - 440, 320)
+                check(width - 420, 320)
                 move(700, 400)
                 release_to(660, 360)
                 move(700, 400)
                 send("press")
                 move(far_x, 320)
-                release_to(width - 360, 280)
+                release_to(width - 340, 280)
                 move(1000, 700)
-                check(width - 360, 280)
+                check(width - 340, 280)
             assert app.poll() is None, f"GTK critical/crash; see {artifacts}"
             assert "assertion" not in log_text() and "CRITICAL" not in log_text(), log_text()
             # Exercise the full production controller, not just the thin example.
